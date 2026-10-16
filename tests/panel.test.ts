@@ -59,6 +59,12 @@ test("hosts stay one label under the zone", () => {
     }),
     "running",
   );
+  assert.equal(
+    serviceReadiness({
+      applications: [{ status: "running:unhealthy" }, { status: "running:unknown" }],
+    }),
+    "starting",
+  );
   assert.equal(serviceReadiness({ status: "exited" }), "failed");
   assert.equal(
     serviceReadiness({ applications: [{ status: "exited" }, { status: "pulling" }] }),
@@ -311,6 +317,10 @@ test("a replaced panel database keeps setup and the Coolify service", async () =
 
   assert.equal(settings.isInstalled(), true);
   assert.equal(settings.getSetting("installed"), "1");
+  settings.setSetting("installed", "0");
+  delete process.env.APEX_DOMAIN;
+  assert.equal(settings.envCompletesInstall(), true);
+  assert.equal(settings.isInstalled(), true);
   assert.equal(settings.coolifyConfig().project, "project");
 
   const recovered = projects.rememberRunningService({

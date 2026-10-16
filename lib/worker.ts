@@ -3,6 +3,7 @@ import { composePlaceholders, renderCompose } from "@/lib/compose";
 import {
   createService,
   deleteService,
+  exitedContainers,
   getService,
   hostsFromCoolifyService,
   listServices,
@@ -269,12 +270,17 @@ async function watchStarting(): Promise<void> {
       continue;
     }
     try {
-      const ready = serviceReadiness(await getService(project.coolifyServiceUuid));
+      const payload = await getService(project.coolifyServiceUuid);
+      const ready = serviceReadiness(payload);
       if (ready === "running") updateProjectState(project.id, { status: "running", error: null });
       else if (ready === "failed") {
+        const started = new Date(project.updatedAt).getTime();
+        if (Number.isFinite(started) && Date.now() - started < 6 * 60 * 1000) continue;
+        const names = exitedContainers(payload);
+        const who = names.length ? names.join(", ") : "A container";
         updateProjectState(project.id, {
           status: "failed",
-          error: "A container exited while starting. Open the service in Coolify and read the db and auth logs.",
+          error: `${who} exited while the stack was starting.`,
         });
       }
     } catch {

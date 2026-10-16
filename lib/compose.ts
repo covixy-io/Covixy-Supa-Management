@@ -53,22 +53,19 @@ echo '${jwtB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-jwt.s
 echo '${schemaB64}' | base64 -d > /tmp/99-schema.sql
 docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf -c log_min_messages=fatal &
 child=$!
-ready=0
-n=0
-while [ "$n" -lt 90 ]; do
-  n=$((n + 1))
-  if pg_isready -U postgres -h localhost >/dev/null 2>&1; then
-    if psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql \\
-      && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql \\
-      && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/99-schema.sql; then
-      ready=1
-      break
-    fi
+while kill -0 "$child" 2>/dev/null; do
+  if test -f /tmp/roles-applied; then
+    wait "$child"
+    exit $?
+  fi
+  if pg_isready -U postgres -h localhost >/dev/null 2>&1 \\
+    && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql \\
+    && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql \\
+    && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/99-schema.sql; then
+    touch /tmp/roles-applied
   fi
   sleep 2
 done
-if [ "$ready" != 1 ]; then exit 1; fi
-touch /tmp/roles-applied
 wait "$child"`;
 }
 

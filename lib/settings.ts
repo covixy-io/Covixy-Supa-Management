@@ -36,9 +36,8 @@ export function setSetting(key: string, value: string): void {
 
 export function envCompletesInstall(): boolean {
   return Boolean(
-    process.env.APEX_DOMAIN?.trim() &&
-      process.env.COOLIFY_API_URL?.trim() &&
-      normalizeCoolifyToken(process.env.COOLIFY_API_TOKEN || "").includes("|") &&
+    process.env.COOLIFY_API_URL?.trim() &&
+      process.env.COOLIFY_API_TOKEN?.trim() &&
       process.env.COOLIFY_PROJECT_UUID?.trim() &&
       process.env.COOLIFY_SERVER_UUID?.trim(),
   );

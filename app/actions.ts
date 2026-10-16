@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { assertPanelAccess, LOCK_COOKIE, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
-import { coolifyMode, listServers } from "@/lib/coolify";
+import { coolifyMode, listServers, persistInstallEnv } from "@/lib/coolify";
 import {
   createProject,
   getProject,
@@ -22,7 +22,16 @@ import {
 } from "@/lib/projects";
 import { signSession } from "@/lib/session";
 import { refreshServerSpecs } from "@/lib/specs-sync";
-import { completeSetup, serverSessionSecret, SetupError, updateCoolifyConnection, verifyPanelPassword } from "@/lib/settings";
+import {
+  completeSetup,
+  coolifyConfig,
+  coolifyToken,
+  panelApex,
+  serverSessionSecret,
+  SetupError,
+  updateCoolifyConnection,
+  verifyPanelPassword,
+} from "@/lib/settings";
 import { processQueue } from "@/lib/worker";
 
 export type ActionState = { error: string } | null;
@@ -182,6 +191,29 @@ export async function revealSecretAction(
   }
 }
 
+async function keepInstallAcrossRedeploy(input: {
+  apex?: string;
+  url?: string;
+  token?: string;
+  project?: string;
+  server?: string;
+  environment?: string;
+  password?: string;
+}): Promise<void> {
+  const plain = (value: string) => ({ value, secret: false });
+  const secret = (value: string) => ({ value, secret: true });
+  await persistInstallEnv({
+    PANEL_INSTALLED: plain("1"),
+    ...(input.apex ? { APEX_DOMAIN: plain(input.apex) } : {}),
+    ...(input.url ? { COOLIFY_API_URL: plain(input.url) } : {}),
+    ...(input.token ? { COOLIFY_API_TOKEN: secret(input.token) } : {}),
+    ...(input.project ? { COOLIFY_PROJECT_UUID: plain(input.project) } : {}),
+    ...(input.server ? { COOLIFY_SERVER_UUID: plain(input.server) } : {}),
+    ...(input.environment ? { COOLIFY_ENVIRONMENT_NAME: plain(input.environment) } : {}),
+    ...(input.password ? { PANEL_PASSWORD: secret(input.password) } : {}),
+  });
+}
+
 export async function setupAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   try {
     const result = completeSetup({
@@ -201,6 +233,15 @@ export async function setupAction(_prev: ActionState, formData: FormData): Promi
       jar.set(LOCK_COOKIE, "1", { ...sessionCookieOptions(), maxAge: 60 * 60 * 24 * 365 });
       jar.set(SESSION_COOKIE, await signSession(serverSessionSecret()), sessionCookieOptions());
     }
+    await keepInstallAcrossRedeploy({
+      apex: String(formData.get("apex") ?? ""),
+      url: String(formData.get("coolifyUrl") ?? ""),
+      token: String(formData.get("coolifyToken") ?? ""),
+      project: String(formData.get("coolifyProject") ?? ""),
+      server: String(formData.get("coolifyServer") ?? ""),
+      environment: String(formData.get("coolifyEnvironment") ?? ""),
+      password: String(formData.get("password") ?? ""),
+    });
     await refreshServerSpecs();
     redirect("/projects");
   } catch (error) {
@@ -257,6 +298,15 @@ export async function updateCoolifyAction(_prev: ActionState, formData: FormData
       project: String(formData.get("coolifyProject") ?? ""),
       server: String(formData.get("coolifyServer") ?? ""),
       environment: String(formData.get("coolifyEnvironment") ?? ""),
+    });
+    const saved = coolifyConfig();
+    await keepInstallAcrossRedeploy({
+      apex: panelApex(),
+      url: saved.url,
+      token: coolifyToken(),
+      project: saved.project,
+      server: saved.server,
+      environment: saved.environment,
     });
     revalidatePath("/settings");
     revalidatePath("/projects");

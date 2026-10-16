@@ -143,6 +143,31 @@ export async function updateServiceUrls(uuid: string, urls: { name: string; url:
   });
 }
 
+export async function persistInstallEnv(env: Record<string, EnvVar>): Promise<void> {
+  const uuid = process.env.COOLIFY_RESOURCE_UUID?.trim() || process.env.COOLIFY_APP_UUID?.trim();
+  if (!uuid || coolifyMode() !== "live") return;
+  const data = Object.entries(env)
+    .filter(([, item]) => item.value)
+    .map(([key, item]) => ({
+      key,
+      value: item.value,
+      is_preview: false,
+      is_literal: true,
+      is_multiline: false,
+      is_shown_once: item.secret,
+    }));
+  if (!data.length) return;
+  const body = JSON.stringify({ data });
+  for (const path of [`/applications/${encodeURIComponent(uuid)}/envs/bulk`, `/services/${encodeURIComponent(uuid)}/envs/bulk`]) {
+    try {
+      await coolifyFetch(path, { method: "PATCH", body });
+      return;
+    } catch {
+      // This panel may be an application or a service. The other path is tried next.
+    }
+  }
+}
+
 export async function setServiceEnv(uuid: string, env: Record<string, EnvVar>): Promise<void> {
   if (coolifyMode() === "rehearsal") return;
   await coolifyFetch(`/services/${uuid}/envs/bulk`, {
@@ -204,9 +229,10 @@ export function serviceReadiness(payload: unknown): "starting" | "running" | "fa
     .filter(Boolean);
   if (!statuses.length) return "starting";
   const pending = (status: string) =>
-    !status.startsWith("running") &&
-    ["unknown", "starting", "restart", "created", "pull", "removing"].some((word) => status.includes(word));
-  const down = (status: string) => ["unhealthy", "exited", "dead"].some((word) => status.includes(word));
+    status.includes("unhealthy") ||
+    (!status.startsWith("running") &&
+      ["unknown", "starting", "restart", "created", "pull", "removing"].some((word) => status.includes(word)));
+  const down = (status: string) => !status.startsWith("running") && ["exited", "dead"].some((word) => status.includes(word));
   const up = (status: string) =>
     !pending(status) && !down(status) && (status.includes("running") || status.includes("healthy"));
   if (statuses.every(up)) return "running";
@@ -251,8 +277,20 @@ export function hostsFromCoolifyService(
   return { apiHost, studioHost };
 }
 
-function asRows(value: unknown): { status?: unknown }[] {
-  return Array.isArray(value) ? (value as { status?: unknown }[]) : [];
+function asRows(value: unknown): { name?: unknown; status?: unknown }[] {
+  return Array.isArray(value) ? (value as { name?: unknown; status?: unknown }[]) : [];
+}
+
+export function exitedContainers(payload: unknown): string[] {
+  const body = payload && typeof payload === "object" ? (payload as { status?: unknown; applications?: unknown; databases?: unknown }) : {};
+  const children = [...asRows(body.applications), ...asRows(body.databases)];
+  const rows = children.length ? children : [{ name: "service", status: body.status }];
+  return rows
+    .filter((row) => {
+      const status = statusText(row.status);
+      return status && !status.startsWith("running") && ["exited", "dead"].some((word) => status.includes(word));
+    })
+    .map((row) => String(row.name || "container"));
 }
 
 function asList(data: unknown): unknown[] {
