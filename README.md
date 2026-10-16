@@ -63,9 +63,7 @@ Default hosts are `{slug}.$APEX_DOMAIN` and `{slug}-studio.$APEX_DOMAIN`. A cust
 
 ## Deploy on Coolify
 
-Create a new resource and choose **Docker Compose**, with this repository as the source. `docker-compose.yml` already mounts a volume named `panel-data` at `/app/data`, so the database survives the next deploy. There is no storage path to add by hand.
-
-Set the environment variables from the section above in Coolify, attach the panel domain, and set the service port to `3000`.
+Docker Compose Empty does not clone Git, so build the image on your machine and push it before you paste `docker-compose.yml`. Replace `YOUR_DOCKERHUB_USER` in that file. The `panel-data` volume is already declared, and Coolify fills the session secret and encryption key.
 
 ## Before you expose it
 

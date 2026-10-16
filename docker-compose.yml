@@ -1,15 +1,23 @@
 services:
   panel:
-    build: .
+    image: docker.io/covixy/covixy-supa-management:1
     restart: unless-stopped
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
       PANEL_DB_PATH: /app/data/panel.db
+      SERVICE_URL_PANEL_3000: ""
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?}
+      PANEL_SESSION_SECRET: ${SERVICE_REALBASE64_32_SESSION}
+      PANEL_ENCRYPTION_KEY: ${SERVICE_REALBASE64_32_KEY}
+      APEX_DOMAIN: ${APEX_DOMAIN:?}
+      COOLIFY_API_URL: ${COOLIFY_API_URL:?}
+      COOLIFY_API_TOKEN: ${COOLIFY_API_TOKEN:?}
+      COOLIFY_PROJECT_UUID: ${COOLIFY_PROJECT_UUID:?}
+      COOLIFY_SERVER_UUID: ${COOLIFY_SERVER_UUID:?}
+      COOLIFY_ENVIRONMENT_NAME: ${COOLIFY_ENVIRONMENT_NAME:-production}
     volumes:
       - panel-data:/app/data
-    expose:
-      - "3000"
 
 volumes:
   panel-data:
