@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { ArrowUpRight, Download, Plus } from "lucide-react";
+import { LeftoverServices } from "@/components/leftover-services";
 import { LiveRefresh } from "@/components/live-refresh";
 import { PageHeader } from "@/components/page-header";
 import { RemoveProject } from "@/components/remove-project";
 import { RestoreProject } from "@/components/restore-project";
 import { isBusy, StatusLamp } from "@/components/status-lamp";
 import { projectAnalytics } from "@/lib/analytics";
-import { coolifyMode } from "@/lib/coolify";
+import { coolifyMode, leftoverServices, listServices, type LeftoverService } from "@/lib/coolify";
 import { formatWhen } from "@/lib/format";
 import { TEMPLATE } from "@/lib/template";
 
@@ -14,10 +15,22 @@ function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-export default function ProjectsPage() {
+export default async function ProjectsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const query = await searchParams;
   const room = projectAnalytics();
   const projects = room.projects;
   const mode = coolifyMode();
+  let leftovers: LeftoverService[] = [];
+  if (mode === "live") {
+    try {
+      leftovers = leftoverServices(
+        await listServices(),
+        projects.map((project) => ({ slug: project.slug, coolifyServiceUuid: project.coolifyServiceUuid })),
+      );
+    } catch {
+      leftovers = [];
+    }
+  }
 
   return (
     <div>
@@ -32,6 +45,7 @@ export default function ProjectsPage() {
           New project
         </Link>
       </PageHeader>
+      {query.error ? <p className="bg-warn-soft text-warn mt-5 rounded-xl px-4 py-3 text-sm">{query.error}</p> : null}
       {mode === "rehearsal" ? (
         <p className="bg-warn-soft text-warn mt-5 rounded-xl px-4 py-3 text-sm">
           Rehearsal mode. Projects are saved here, and Coolify calls wait until the API URL, token, project, and server are set.
@@ -120,13 +134,14 @@ export default function ProjectsPage() {
                   <ArrowUpRight size={16} />
                 </Link>
                 {project.status === "deleting" ? null : (
-                  <RemoveProject id={project.id} slug={project.slug} keysLocal={project.keysLocal} />
+                  <RemoveProject id={project.id} slug={project.slug} />
                 )}
               </div>
             </li>
           ))}
         </ul>
       )}
+      <LeftoverServices services={leftovers} />
     </div>
   );
 }

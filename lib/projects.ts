@@ -402,7 +402,8 @@ export function rememberRunningService(input: {
   if (validateSlug(input.slug)) return null;
   const existing = getProjectBySlug(input.slug);
   if (existing) {
-    if (!existing.coolifyServiceUuid) updateProjectState(existing.id, { coolifyServiceUuid: input.uuid });
+    const creating = existing.status === "queued" || existing.status === "provisioning" || existing.status === "deleting";
+    if (!existing.coolifyServiceUuid && !creating) updateProjectState(existing.id, { coolifyServiceUuid: input.uuid });
     return getProject(existing.id);
   }
   const apex = panelApex();

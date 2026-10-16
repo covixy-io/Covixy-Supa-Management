@@ -7,7 +7,7 @@ import { capacity } from "../lib/capacity.ts";
 import { reserveFromSpecs, specsFromCoolify } from "../lib/server-specs.ts";
 import { composePlaceholders, renderCompose, stackEnv } from "../lib/compose.ts";
 import { hostsFor, singleLabelHosts, validateApex, validateSlug } from "../lib/hosts.ts";
-import { hostsFromCoolifyService, serviceReadiness } from "../lib/coolify.ts";
+import { hostsFromCoolifyService, leftoverServices, serviceReadiness } from "../lib/coolify.ts";
 import { describeAddresses } from "../lib/urls.ts";
 import { decodeJwtPayload, generateStackSecrets, scrubSecrets, signJwt } from "../lib/secrets.ts";
 
@@ -91,6 +91,20 @@ test("hosts stay one label under the zone", () => {
   assert.equal(both.apiUrls.includes("https://acme.covixy.com"), false);
   assert.equal(validateApex("covixy.com"), null);
   assert.ok(validateApex("https://covixy.com"));
+});
+
+test("a second Coolify service with the same name is the previous stack", () => {
+  const rows = leftoverServices(
+    [
+      { name: "supa-demo", uuid: "current" },
+      { name: "supa-demo", uuid: "old" },
+      { name: "supa-other", uuid: "kept" },
+    ],
+    [{ slug: "demo", coolifyServiceUuid: "current" }],
+  );
+  assert.equal(rows.find((row) => row.uuid === "current"), undefined);
+  assert.equal(rows.find((row) => row.uuid === "old")?.kind, "previous");
+  assert.equal(rows.find((row) => row.uuid === "kept")?.kind, "untracked");
 });
 
 test("compose placeholders are all given to Coolify", () => {
@@ -224,6 +238,34 @@ test("rehearsal create, pause, resume, and delete", async () => {
   assert.equal(projects.revealSecret(restored.id, "serviceRole"), revealed);
   assert.throws(() => projects.restoreProject(archive), /already used/);
   assert.throws(() => projects.restoreProject({ format: "nope" }), /offline project/);
+
+  projects.requestDelete(restored.id);
+  await worker.processQueue();
+  const leftover = projects.rememberRunningService({
+    slug: "oldstack",
+    uuid: "old-uuid",
+    apiHost: "oldstack.covixy.com",
+    studioHost: "oldstack-studio.covixy.com",
+    envValues: {},
+  });
+  assert.equal(leftover?.keysLocal, false);
+  projects.requestDelete(leftover!.id);
+  await worker.processQueue();
+  assert.equal(projects.getProjectBySlug("oldstack"), null);
+
+  const recreated = projects.createProject({ name: "Oldstack", slug: "oldstack" });
+  const attached = projects.rememberRunningService({
+    slug: "oldstack",
+    uuid: "old-uuid",
+    apiHost: "oldstack.covixy.com",
+    studioHost: "oldstack-studio.covixy.com",
+    envValues: {},
+  });
+  assert.equal(attached?.id, recreated.id);
+  assert.equal(attached?.coolifyServiceUuid, null);
+  await worker.processQueue();
+  assert.equal(projects.getProject(recreated.id)?.coolifyServiceUuid, "rehearsal-oldstack");
+  assert.equal(projects.getProject(recreated.id)?.keysLocal, true);
 });
 
 test("settings save the full Coolify token", async () => {

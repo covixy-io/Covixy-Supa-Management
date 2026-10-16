@@ -4,10 +4,11 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { assertPanelAccess, LOCK_COOKIE, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
-import { coolifyMode, listServers, persistInstallEnv } from "@/lib/coolify";
+import { coolifyMode, deleteService, leftoverServices, listServers, listServices, persistInstallEnv } from "@/lib/coolify";
 import {
   createProject,
   getProject,
+  listProjects,
   PanelError,
   readEnvValue,
   restoreProject,
@@ -129,6 +130,28 @@ export async function deleteProjectAction(formData: FormData): Promise<void> {
   } catch (error) {
     unstable_rethrow(error);
     redirect(`/projects/${id}?error=${encodeURIComponent(message(error))}`);
+  }
+}
+
+export async function deleteLeftoverAction(formData: FormData): Promise<void> {
+  await assertPanelAccess();
+  const uuid = String(formData.get("uuid") ?? "");
+  const name = String(formData.get("name") ?? "");
+  const confirm = String(formData.get("confirm") ?? "");
+  if (!uuid || confirm !== name) {
+    redirect(`/projects?error=${encodeURIComponent("Type the Coolify service name to delete that stack.")}`);
+  }
+  try {
+    const match = leftoverServices(
+      await listServices(),
+      listProjects().map((project) => ({ slug: project.slug, coolifyServiceUuid: project.coolifyServiceUuid })),
+    ).find((service) => service.uuid === uuid && service.name === name);
+    if (!match) redirect(`/projects?error=${encodeURIComponent("That Coolify service is already gone.")}`);
+    await deleteService(uuid);
+    redirect("/projects");
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(`/projects?error=${encodeURIComponent(message(error))}`);
   }
 }
 

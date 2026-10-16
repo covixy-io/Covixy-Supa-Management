@@ -208,7 +208,21 @@ export async function deleteService(uuid: string): Promise<void> {
     docker_cleanup: "false",
     delete_connected_networks: "true",
   });
-  await coolifyFetch(`/services/${uuid}?${query}`, { method: "DELETE" });
+  try {
+    await coolifyFetch(`/services/${uuid}?${query}`, { method: "DELETE" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.startsWith("Coolify 404")) return;
+    throw error;
+  }
+}
+
+export async function deleteServicesNamed(name: string): Promise<void> {
+  if (coolifyMode() === "rehearsal") return;
+  const services = await listServices();
+  for (const service of services) {
+    if (service.name === name) await deleteService(service.uuid);
+  }
 }
 
 function statusText(value: unknown): string {
@@ -303,6 +317,38 @@ function asList(data: unknown): unknown[] {
 
 export async function getService(uuid: string): Promise<unknown> {
   return coolifyFetch(`/services/${encodeURIComponent(uuid)}`);
+}
+
+export type LeftoverService = {
+  name: string;
+  uuid: string;
+  slug: string;
+  kind: "previous" | "untracked";
+};
+
+export function leftoverServices(
+  services: { name: string; uuid: string }[],
+  projects: { slug: string; coolifyServiceUuid: string | null }[],
+): LeftoverService[] {
+  const linked = new Set(
+    projects.map((project) => project.coolifyServiceUuid).filter((uuid): uuid is string => Boolean(uuid)),
+  );
+  const currentBySlug = new Map(
+    projects
+      .filter((project) => project.coolifyServiceUuid)
+      .map((project) => [project.slug, project.coolifyServiceUuid as string]),
+  );
+  return services
+    .filter((service) => service.name.startsWith("supa-") && service.uuid && !linked.has(service.uuid))
+    .map((service) => {
+      const slug = service.name.slice("supa-".length);
+      return {
+        name: service.name,
+        uuid: service.uuid,
+        slug,
+        kind: currentBySlug.has(slug) ? ("previous" as const) : ("untracked" as const),
+      };
+    });
 }
 
 export async function listServices(): Promise<{ name: string; uuid: string }[]> {

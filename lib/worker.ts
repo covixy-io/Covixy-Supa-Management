@@ -3,9 +3,11 @@ import { composePlaceholders, renderCompose } from "@/lib/compose";
 import {
   createService,
   deleteService,
+  deleteServicesNamed,
   exitedContainers,
   getService,
   hostsFromCoolifyService,
+  leftoverServices,
   listServices,
   readServiceEnvValues,
   restartOrStart,
@@ -74,6 +76,8 @@ async function provision(job: Job): Promise<void> {
   let uuid = project.coolifyServiceUuid;
   const existing = Boolean(uuid);
   if (!uuid) {
+    log(job, secretValues, "removing any previous service with this name, including its database");
+    await deleteServicesNamed(`supa-${project.slug}`);
     log(job, secretValues, "creating Coolify service");
     uuid = await createService({
       slug: project.slug,
@@ -168,14 +172,12 @@ async function remove(job: Job): Promise<void> {
     return;
   }
   const secrets = safeSecretValues(project.id);
-  if (project.coolifyServiceUuid && project.keysLocal) {
+  if (project.coolifyServiceUuid) {
     log(job, secrets, `deleting ${project.coolifyServiceUuid} and its volumes`);
     await deleteService(project.coolifyServiceUuid);
-  } else if (project.coolifyServiceUuid) {
-    log(job, secrets, "keeping the Coolify service and its database; removing only the panel row");
-  } else {
-    log(job, secrets, "no Coolify service; removing the panel record");
   }
+  await deleteServicesNamed(`supa-${project.slug}`);
+  log(job, secrets, "Coolify service and database removed");
   writeAudit("project.deleted", project, project.coolifyServiceUuid || "panel record only");
   removeProject(project.id);
 }
@@ -244,6 +246,15 @@ async function recallServices(): Promise<void> {
   }
 }
 
+async function dropPreviousServices(): Promise<void> {
+  if (coolifyMode() !== "live") return;
+  const previous = leftoverServices(
+    await listServices(),
+    listProjects().map((project) => ({ slug: project.slug, coolifyServiceUuid: project.coolifyServiceUuid })),
+  ).filter((service) => service.kind === "previous");
+  for (const service of previous) await deleteService(service.uuid);
+}
+
 async function recallOnce(): Promise<void> {
   if (coolifyMode() !== "live") return;
   const now = Date.now();
@@ -300,6 +311,11 @@ export async function processQueue(): Promise<void> {
       await run(job);
     }
     await recallOnce();
+    try {
+      await dropPreviousServices();
+    } catch (error) {
+      console.error(error);
+    }
     await watchStarting();
   } finally {
     gate.__csmBusy = false;

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { deleteProjectAction } from "@/app/actions";
 
-export function RemoveProject({ id, slug, keysLocal }: { id: string; slug: string; keysLocal: boolean }) {
+export function RemoveProject({ id, slug }: { id: string; slug: string }) {
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState("");
 
@@ -23,8 +23,7 @@ export function RemoveProject({ id, slug, keysLocal }: { id: string; slug: strin
       <input type="hidden" name="slug" value={slug} />
       <label className="min-w-40 flex-1 text-xs">
         <span className="text-muted font-medium">
-          Type {slug} to remove this project.
-          {keysLocal ? " This also deletes its Coolify service and database volume." : " The Coolify service stays."}
+          Type {slug} to remove this project. This deletes its Coolify service and database volume. A new project with this slug starts empty.
         </span>
         <input
           name="confirm"
