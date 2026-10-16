@@ -4,7 +4,8 @@
   --bg: #f5f7fa;
   --surface: #ffffff;
   --ink: #001435;
-  --muted: #687173;
+  --muted: #3f4c59;
+  --hover: #e8edf2;
   --line: #cbd2d6;
   --blue: #0070ba;
   --blue-deep: #003087;
@@ -16,14 +17,15 @@
 }
 
 .dark {
-  --bg: #001435;
-  --surface: #002657;
+  --bg: #090d16;
+  --surface: #111827;
+  --hover: #1f2937;
   --ink: #ffffff;
-  --muted: #b7c3ce;
-  --line: #1c4a7a;
+  --muted: rgba(255, 255, 255, 0.72);
+  --line: #243044;
   --blue: #009cde;
   --blue-deep: #0070ba;
-  --blue-soft: #00387a;
+  --blue-soft: #1a2333;
   --danger: #ff8a80;
   --warn: #ffc14d;
   --warn-soft: #3a2c10;
@@ -44,6 +46,7 @@
   --color-danger: var(--danger);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
+  --color-hover: var(--hover);
 }
 
 html {
@@ -55,6 +58,7 @@ body {
   background: var(--bg);
   color: var(--ink);
   min-height: 100vh;
+  font-size: 14px;
 }
 
 ::selection {
@@ -90,7 +94,7 @@ button:disabled {
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
 }
 
@@ -99,11 +103,16 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  border-radius: 999px;
+  border-radius: 8px;
   padding: 0.55rem 1rem;
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.2;
+}
+
+.btn-sm {
+  padding: 0.28rem 0.6rem;
+  font-size: 13px;
 }
 
 .btn-primary {
@@ -117,18 +126,66 @@ button:disabled {
 
 .btn-ghost {
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: transparent;
   color: var(--ink);
 }
 
 .btn-ghost:hover {
-  border-color: var(--blue);
+  background: var(--hover);
+}
+
+.btn-text {
+  background: transparent;
+  color: var(--ink);
+}
+
+.btn-text:hover {
+  background: var(--hover);
 }
 
 .btn-danger {
-  border: 1px solid var(--danger);
-  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+.segment {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 3px;
+}
+
+.segment button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.segment button[aria-selected="true"],
+.segment button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.dark .segment button[aria-selected="true"],
+.dark .segment button[aria-pressed="true"] {
+  background: var(--hover);
+  box-shadow: none;
 }
 
 .icon-btn {
@@ -137,13 +194,41 @@ button:disabled {
   justify-content: center;
   height: 2rem;
   width: 2rem;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: 6px;
   color: var(--ink);
 }
 
 .icon-btn:hover {
-  border-color: var(--blue);
+  background: var(--hover);
   color: var(--blue);
+}
+
+.env-scroll {
+  max-height: 28rem;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.env-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.env-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 8px 0;
+}
+
+.env-scroll::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+
+.log-scroll {
+  max-height: min(40vh, 22rem);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }

@@ -10,7 +10,7 @@ export function RemoveProject({ id, slug }: { id: string; slug: string }) {
 
   if (!open) {
     return (
-      <button type="button" className="btn btn-ghost" onClick={() => setOpen(true)}>
+      <button type="button" className="btn btn-danger" onClick={() => setOpen(true)}>
         <Trash2 size={16} />
         Remove
       </button>

@@ -108,7 +108,8 @@ while kill -0 "$$child" 2>/dev/null; do
   if pg_isready -U postgres -h localhost >/dev/null 2>&1 \\
     && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql \\
     && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql \\
-    && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/99-schema.sql; then
+    && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/99-schema.sql \\
+    && sh -c 'if [ -z "$$CSM_RESTORE_URL" ]; then exit 0; fi; curl -fsSL -H "Authorization: Bearer $$CSM_RESTORE_TOKEN" "$$CSM_RESTORE_URL" -o /tmp/hosted-restore.sql && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/hosted-restore.sql && rm -f /tmp/hosted-restore.sql'; then
     touch /tmp/roles-applied
   fi
   sleep 2
@@ -181,6 +182,8 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
       PGDATABASE: \${POSTGRES_DB}
       POSTGRES_DB: \${POSTGRES_DB}
       JWT_EXP: \${JWT_EXP}
+      CSM_RESTORE_URL: \${CSM_RESTORE_URL}
+      CSM_RESTORE_TOKEN: \${CSM_RESTORE_TOKEN}
     volumes:
       - db:/var/lib/postgresql/data
     healthcheck:
@@ -401,10 +404,14 @@ ${namedVolumes(volumeKey)}
 }
 
 function namedVolumes(volumeKey?: string | null): string {
-  const key = volumeKey?.replace(/[^a-zA-Z0-9_-]/g, "") || "";
-  const lines = ["db", "storage", "snippets"].map((name) =>
-    key ? `  ${name}:\n    name: csm-${key}-${name}` : `  ${name}:`,
-  );
+  const raw = volumeKey || "";
+  const serviceUuid = raw.startsWith("svc:") ? raw.slice(4).replace(/[^a-zA-Z0-9_-]/g, "") : "";
+  const key = serviceUuid ? "" : raw.replace(/[^a-zA-Z0-9_-]/g, "");
+  const lines = ["db", "storage", "snippets"].map((name) => {
+    if (serviceUuid) return `  ${name}:\n    name: ${serviceUuid}_${name}`;
+    if (key) return `  ${name}:\n    name: csm-${key}-${name}`;
+    return `  ${name}:`;
+  });
   return lines.join("\n");
 }
 
@@ -479,6 +486,8 @@ export function stackEnv(input: {
     STORAGE_TENANT_ID: plain(input.slug),
     REGION: plain("local"),
     IMGPROXY_AUTO_WEBP: plain("true"),
+    CSM_RESTORE_URL: secret(""),
+    CSM_RESTORE_TOKEN: secret(""),
   };
 }
 

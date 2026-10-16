@@ -48,11 +48,7 @@ export function ServerPicture({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">Whole server</p>
           <p className="text-muted mt-1 text-sm">{basis}</p>
-          <div className="bg-blue-soft mt-4 flex h-4 overflow-hidden rounded-full">
-            <div className="bg-muted h-4" style={{ width: `${reservePct}%` }} />
-            <div className="bg-blue h-4" style={{ width: `${loadPct}%` }} />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-sm">
             <span className="inline-flex items-center gap-1.5">
               <span className="bg-muted h-2 w-2 rounded-full" />
               Reserved {reserveMb} MB
@@ -70,7 +66,7 @@ export function ServerPicture({
         </div>
       </div>
 
-      <dl className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <dl className="mt-6 grid gap-px overflow-hidden rounded-lg bg-[var(--line)] [grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr))]">
         {[
           ["RAM", `${serverRamMb} MB`],
           cpus ? ["CPUs", String(cpus)] : null,
@@ -117,8 +113,8 @@ export function ServerPicture({
 
 function Spec({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-bg rounded-lg px-3 py-2">
-      <dt className="text-muted text-xs">{label}</dt>
+    <div className="bg-surface px-3 py-2">
+      <dt className="text-muted text-sm">{label}</dt>
       <dd className="mt-0.5 text-sm font-semibold break-all">{value}</dd>
     </div>
   );

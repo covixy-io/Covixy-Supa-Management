@@ -16,22 +16,18 @@ function HiddenId({ id, slug }: { id: string; slug?: string }) {
 
 export function ProjectActions({
   id,
-  slug,
   status,
   lastJob,
   keysLocal = true,
 }: {
   id: string;
-  slug: string;
   status: string;
   lastJob: JobType | null;
   keysLocal?: boolean;
 }) {
-  const [confirm, setConfirm] = useState("");
   const showPause = status === "running" || (status === "failed" && lastJob === "pause");
   const showResume = status === "paused" || (status === "failed" && lastJob === "resume");
   const showProvision = status === "failed" && (lastJob === "provision" || lastJob === null);
-  const showDelete = status !== "deleting";
 
   return (
     <div className="space-y-4">
@@ -78,26 +74,35 @@ export function ProjectActions({
           ? "Update stack sends the saved compose and keys again. It does not ask for them a second time. Coolify’s Deploy button can open an empty form and replace those keys, so use this button instead."
           : "Update stack sends the new compose and restarts the service. It leaves the keys already stored on that Coolify service."}
       </p>
-      {showDelete ? (
-        <form action={deleteProjectAction} className="card p-4">
-          <HiddenId id={id} slug={slug} />
-          <p className="text-sm">Delete removes the Coolify service and its database volume. Download an offline copy first if you want to restore the keys and environment later.</p>
-          <label className="mt-3 block">
-            <span className="text-muted text-xs font-medium">Type {slug} to confirm</span>
-            <input
-              name="confirm"
-              value={confirm}
-              onChange={(event) => setConfirm(event.target.value)}
-              className="mt-1.5 w-full px-3 py-2 font-mono text-sm"
-              autoComplete="off"
-            />
-          </label>
-          <button type="submit" disabled={confirm !== slug} className="btn btn-danger mt-3">
-            <Trash2 size={16} />
-            Delete stack
-          </button>
-        </form>
-      ) : null}
     </div>
+  );
+}
+
+export function DangerZone({ id, slug, status }: { id: string; slug: string; status: string }) {
+  const [confirm, setConfirm] = useState("");
+  if (status === "deleting") return null;
+  return (
+    <form action={deleteProjectAction} className="border-danger mt-8 rounded-xl border p-5">
+      <HiddenId id={id} slug={slug} />
+      <h2 className="text-danger text-sm font-semibold">Danger zone</h2>
+      <p className="mt-2 text-sm">
+        Delete removes the Coolify service and its database volume. Download an offline copy first if you want to restore
+        the keys and environment later.
+      </p>
+      <label className="mt-3 block">
+        <span className="text-muted text-sm font-medium">Type {slug} to confirm</span>
+        <input
+          name="confirm"
+          value={confirm}
+          onChange={(event) => setConfirm(event.target.value)}
+          className="mt-1.5 w-full max-w-sm px-3 py-2 font-mono text-sm"
+          autoComplete="off"
+        />
+      </label>
+      <button type="submit" disabled={confirm !== slug} className="btn btn-danger mt-3">
+        <Trash2 size={16} />
+        Delete stack
+      </button>
+    </form>
   );
 }

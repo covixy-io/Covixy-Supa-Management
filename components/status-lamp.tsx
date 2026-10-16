@@ -14,3 +14,21 @@ export function StatusLamp({ status }: { status: string }) {
     </span>
   );
 }
+
+export function StatusDot({ status }: { status: string }) {
+  const tone =
+    status === "running"
+      ? "bg-[#1f9d55]"
+      : status === "failed"
+        ? "bg-danger"
+        : status === "paused"
+          ? "bg-[#d4a017]"
+          : "bg-warn";
+  const label = status === "failed" ? "error" : status;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[13px] font-medium tracking-wide uppercase">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${tone} ${isBusy(status) ? "animate-pulse" : ""}`} />
+      {label}
+    </span>
+  );
+}

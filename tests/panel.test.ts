@@ -9,6 +9,7 @@ import { composePlaceholders, renderCompose, stackEnv } from "../lib/compose.ts"
 import { hostsFor, singleLabelHosts, validateApex, validateSlug } from "../lib/hosts.ts";
 import { containerReport, hostsFromCoolifyService, leftoverServices, serviceReadiness } from "../lib/coolify.ts";
 import { describeAddresses } from "../lib/urls.ts";
+import { assertCloudKeys, parseDatabaseUrl, renderRestoreSql } from "../lib/restore-sql.ts";
 import { decodeJwtPayload, generateStackSecrets, scrubSecrets, signJwt } from "../lib/secrets.ts";
 
 test("keys are signed for anon and service_role and expire after 2030", () => {
@@ -26,6 +27,28 @@ test("keys are signed for anon and service_role and expire after 2030", () => {
   assert.ok(secrets.postgresPassword.length >= 24);
   assert.equal(secrets.realtimeDbEncKey.length, 16);
   assert.equal(secrets.dashboardUsername, "supabase");
+});
+
+test("a hosted Supabase copy includes auth users and rejects the transaction pooler", () => {
+  assert.throws(() => parseDatabaseUrl("postgresql://postgres:secret@aws-0.pooler.supabase.com:6543/postgres"), /5432/);
+  const secrets = generateStackSecrets();
+  assertCloudKeys(secrets.jwtSecret, secrets.anonKey, secrets.serviceRoleKey);
+  assert.throws(() => assertCloudKeys(secrets.jwtSecret, secrets.serviceRoleKey, secrets.anonKey), /anon key/);
+  const sql = renderRestoreSql({
+    tables: [
+      {
+        schema: "auth",
+        name: "users",
+        createSql: null,
+        rows: [{ id: "11111111-1111-1111-1111-111111111111", email: "ada@example.com" }],
+      },
+    ],
+    functions: [],
+    policies: [],
+  });
+  assert.match(sql, /INSERT INTO "auth"\."users"/);
+  assert.match(sql, /ada@example.com/);
+  assert.equal(sql.includes("postgresql://"), false);
 });
 
 test("hosts stay one label under the zone", () => {
@@ -151,7 +174,10 @@ test("compose placeholders are all given to Coolify", () => {
   assert.match(yaml, /\$\{SUPABASE_SERVICE_ROLE_KEY\}/);
   assert.equal(yaml.includes("csm-"), false);
   assert.match(renderCompose("acme", "abc"), /name: csm-abc-db/);
+  assert.match(renderCompose("acme", "svc:abc123"), /name: abc123_db/);
   assert.match(yaml, /roles-applied/);
+  assert.match(yaml, /CSM_RESTORE_URL/);
+  assert.match(yaml, /hosted-restore\.sql/);
   assert.match(yaml, /SNIPPETS_MANAGEMENT_FOLDER/);
   assert.match(yaml, /supabase\/gotrue:v2\.197\.0/);
   assert.equal(yaml.includes(secrets.postgresPassword), false);
@@ -255,6 +281,19 @@ test("rehearsal create, pause, resume, and delete", async () => {
   projects.requestPause(created.id);
   await worker.processQueue();
   assert.equal(projects.getProject(created.id)?.status, "paused");
+
+  const copied = projects.copyProject(created.id, { name: "Acme copy", slug: "acme-copy" });
+  assert.equal(copied.volumeKey, created.volumeKey);
+  assert.equal(projects.revealSecret(copied.id, "postgres"), projects.revealSecret(created.id, "postgres"));
+  assert.equal(projects.revealSecret(copied.id, "jwt"), projects.revealSecret(created.id, "jwt"));
+  assert.equal(projects.revealSecret(copied.id, "studio"), projects.revealSecret(created.id, "studio"));
+  assert.equal(projects.readEnvValue(copied.id, "API_EXTERNAL_URL"), "https://acme-copy.covixy.com");
+  assert.equal(projects.readEnvValue(copied.id, "REGION"), "eu");
+  await worker.processQueue();
+  assert.equal(projects.getProject(created.id)?.status, "paused");
+  assert.equal(projects.getProject(copied.id)?.status, "running");
+  projects.requestDelete(copied.id);
+  await worker.processQueue();
 
   projects.requestResume(created.id);
   await worker.processQueue();

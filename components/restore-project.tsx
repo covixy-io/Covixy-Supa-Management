@@ -38,7 +38,7 @@ export function RestoreProject() {
             <div>
               <p className="text-lg font-semibold">Restore an offline project</p>
               <p className="text-muted mt-1 text-sm">
-                Choose a Covixy offline file. The stack is created again with the same keys and environment. Database rows are not in that file.
+                Choose a Covixy offline file. It restores the same keys and settings. Auth users, table rows, and storage files are not in that file.
               </p>
             </div>
             <button type="button" className="icon-btn" aria-label="Close restore" onClick={reset}>

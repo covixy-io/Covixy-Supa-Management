@@ -10,6 +10,7 @@ export async function proxy(request: NextRequest) {
   headers.set("x-pathname", pathname);
   const next = () => NextResponse.next({ request: { headers } });
 
+  if (pathname.startsWith("/api/db-restore/")) return next();
   if (!passwordConfigured()) return next();
 
   const token = request.cookies.get("csm_session")?.value;

@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { assertPanelAccess, LOCK_COOKIE, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
 import { coolifyMode, deleteService, leftoverServices, listServers, listServices, persistInstallEnv } from "@/lib/coolify";
 import {
+  copyProject,
+  createImportedProject,
   createProject,
   getProject,
   listProjects,
@@ -33,6 +35,7 @@ import {
   updateCoolifyConnection,
   verifyPanelPassword,
 } from "@/lib/settings";
+import { assertCloudKeys, parseDatabaseUrl } from "@/lib/restore-sql";
 import { processQueue } from "@/lib/worker";
 
 export type ActionState = { error: string } | null;
@@ -155,6 +158,57 @@ export async function deleteLeftoverAction(formData: FormData): Promise<void> {
   }
 }
 
+export async function bulkProjectsAction(formData: FormData): Promise<void> {
+  await assertPanelAccess();
+  const op = String(formData.get("op") ?? "");
+  const ids = formData.getAll("id").map((value) => String(value)).filter(Boolean);
+  if (!ids.length) redirect(`/projects?error=${encodeURIComponent("Select at least one project.")}`);
+  if (op === "delete" && String(formData.get("confirm") ?? "") !== "delete") {
+    redirect(`/projects?error=${encodeURIComponent("Type delete to remove the selected projects.")}`);
+  }
+  const skipped: string[] = [];
+  let done = 0;
+  for (const id of ids) {
+    const project = getProject(id);
+    if (!project) continue;
+    try {
+      if (op === "pause") {
+        if (project.status !== "running") {
+          skipped.push(`${project.slug} is ${project.status}`);
+          continue;
+        }
+        requestPause(id);
+      } else if (op === "start") {
+        if (project.status === "paused" || project.status === "failed") requestResume(id);
+        else if (project.status === "queued") requestProvision(id);
+        else {
+          skipped.push(`${project.slug} is ${project.status}`);
+          continue;
+        }
+      } else if (op === "delete") {
+        requestDelete(id);
+      } else {
+        redirect(`/projects?error=${encodeURIComponent("Unknown bulk action.")}`);
+      }
+      done += 1;
+    } catch (error) {
+      unstable_rethrow(error);
+      skipped.push(message(error));
+    }
+  }
+  if (done) {
+    try {
+      await processQueue();
+    } catch {
+      // Each project keeps the status the queue stored.
+    }
+  }
+  const summary = [`Updated ${done}`, skipped.length ? `skipped ${skipped.length}: ${skipped.slice(0, 4).join(", ")}` : ""]
+    .filter(Boolean)
+    .join(". ");
+  redirect(`/projects?notice=${encodeURIComponent(summary)}`);
+}
+
 export async function provisionProjectAction(formData: FormData): Promise<void> {
   await assertPanelAccess();
   const id = String(formData.get("id") ?? "");
@@ -181,6 +235,70 @@ export async function updateAddressesAction(
     return {};
   } catch (error) {
     return { error: message(error) };
+  }
+}
+
+export async function importSupabaseAction(formData: FormData): Promise<void> {
+  await assertPanelAccess();
+  const name = String(formData.get("name") || "");
+  const slug = String(formData.get("slug") || "");
+  const connectionString = String(formData.get("databaseUrl") || "");
+  const jwtSecret = String(formData.get("jwtSecret") || "");
+  const anonKey = String(formData.get("anonKey") || "");
+  const serviceRoleKey = String(formData.get("serviceRoleKey") || "");
+  const studioPassword = String(formData.get("studioPassword") || "");
+  const sourceApiUrl = String(formData.get("sourceUrl") || "");
+  try {
+    parseDatabaseUrl(connectionString);
+    assertCloudKeys(jwtSecret, anonKey, serviceRoleKey);
+    if (sourceApiUrl && !/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(sourceApiUrl.trim())) {
+      throw new PanelError("Project URL should look like https://your-project.supabase.co.");
+    }
+    const requestHeaders = await headers();
+    const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "";
+    if (!host) throw new PanelError("Open this panel in the browser and run the import again.");
+    const proto = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
+    const project = createImportedProject({
+      name,
+      slug,
+      connectionString,
+      jwtSecret,
+      anonKey,
+      serviceRoleKey,
+      studioPassword,
+      sourceApiUrl,
+      panelBaseUrl: `${proto}://${host}`,
+    });
+    try {
+      await processQueue();
+    } catch {
+      // The project page shows the failed job.
+    }
+    revalidatePath("/projects");
+    redirect(`/projects/${project.id}`);
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(`/projects?error=${encodeURIComponent(message(error))}`);
+  }
+}
+
+export async function copyProjectAction(formData: FormData): Promise<void> {
+  await assertPanelAccess();
+  const id = String(formData.get("id") || "");
+  const name = String(formData.get("name") || "");
+  const slug = String(formData.get("slug") || "");
+  try {
+    const project = copyProject(id, { name, slug });
+    try {
+      await processQueue();
+    } catch {
+      // The project page shows the failed job.
+    }
+    revalidatePath("/projects");
+    redirect(`/projects/${project.id}`);
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(`/projects?error=${encodeURIComponent(message(error))}`);
   }
 }
 

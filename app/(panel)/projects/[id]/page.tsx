@@ -5,7 +5,8 @@ import { AddressEditor } from "@/components/address-editor";
 import { EnvEditor } from "@/components/env-editor";
 import { LiveRefresh } from "@/components/live-refresh";
 import { PageHeader } from "@/components/page-header";
-import { ProjectActions } from "@/components/project-actions";
+import { DangerZone, ProjectActions } from "@/components/project-actions";
+import { JobLog } from "@/components/job-log";
 import { isBusy, StatusLamp } from "@/components/status-lamp";
 import { projectAnalytics } from "@/lib/analytics";
 import { coolifyMode } from "@/lib/coolify";
@@ -113,7 +114,7 @@ export default async function ProjectPage({
                   <dd>{analytics.containers}</dd>
                 </div>
               </dl>
-              <p className="text-muted mt-3 text-xs">Estimated from the template, not live container memory.</p>
+              <p className="text-muted mt-3 text-sm">Estimated from the template, not live container memory.</p>
             </div>
           ) : null}
 
@@ -141,26 +142,16 @@ export default async function ProjectPage({
             </dl>
           </div>
 
-          {job ? (
-            <div className="card p-4">
-              <p className="text-muted text-xs font-medium">
-                Latest job · {job.type} · {job.status}
-              </p>
-              <pre className="bg-bg mt-3 max-h-64 overflow-auto rounded-lg p-3 font-mono text-xs whitespace-pre-wrap">
-                {job.log || "Waiting for the worker."}
-              </pre>
-            </div>
-          ) : null}
-
           <ProjectActions
             id={project.id}
-            slug={project.slug}
             status={project.status}
             lastJob={job?.type ?? null}
             keysLocal={project.keysLocal}
           />
         </aside>
       </section>
+      <DangerZone id={project.id} slug={project.slug} status={project.status} />
+      {job ? <JobLog type={job.type} status={job.status} log={job.log} /> : null}
     </div>
   );
 }

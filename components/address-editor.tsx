@@ -50,17 +50,18 @@ export function AddressEditor({
   });
 
   return (
-    <div className="card space-y-4 p-4">
+    <div className={projectId ? "card space-y-4 p-5" : "space-y-4"}>
       <div className="flex items-center gap-2">
         <Globe size={16} className="text-blue" />
         <h2 className="text-sm font-semibold">Addresses</h2>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="segment" role="tablist" aria-label="Address scheme">
         {schemes.map((item) => (
           <button
             key={item.id}
             type="button"
-            className={choice === item.id ? "btn btn-primary" : "btn btn-ghost"}
+            role="tab"
+            aria-selected={choice === item.id}
             onClick={() => {
               setChoice(item.id);
               setSaved(false);
@@ -93,10 +94,10 @@ export function AddressEditor({
           className="mt-1.5 w-full px-3 py-2 font-mono text-sm"
         />
       </label>
-      <div className="bg-bg space-y-2 rounded-xl p-3 text-sm">
+      <div className="border-line divide-line divide-y border-t text-sm">
         <UrlLine label="API" urls={preview.apiUrls} />
         <UrlLine label="Panel" urls={preview.panelUrls} />
-        <p className="text-muted text-xs">
+        <p className="text-muted py-3 text-sm">
           {choice === "http"
             ? "Only HTTP is published, so https:// returns 404."
             : choice === "both"
@@ -150,9 +151,9 @@ export function AddressEditor({
 
 function UrlLine({ label, urls }: { label: string; urls: string[] }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2 py-3">
       <div>
-        <p className="text-muted text-xs font-medium">{label}</p>
+        <p className="text-muted text-sm font-medium">{label}</p>
         {urls.map((url) => (
           <p key={url} className="font-mono text-xs break-all">
             {url}

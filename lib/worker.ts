@@ -1,4 +1,6 @@
 import { recordSampleIfDue } from "@/lib/analytics";
+import { writeCloudRestore } from "@/lib/cloud-read";
+import { readImportPlan, restoreSqlPath, saveImportPlan } from "@/lib/cloud-import";
 import { composePlaceholders, renderCompose } from "@/lib/compose";
 import {
   containerReport,
@@ -36,9 +38,11 @@ import {
   removeProject,
   updateProjectState,
   writeAudit,
+  writeProjectEnv,
 } from "@/lib/projects";
 import { panelApex } from "@/lib/settings";
 import { scrubSecrets } from "@/lib/secrets";
+import { copyStorageFiles } from "@/lib/storage-copy";
 import type { Job } from "@/lib/template";
 import { applyAddressEnv, describeAddresses } from "@/lib/urls";
 
@@ -65,6 +69,7 @@ async function provision(job: Job): Promise<void> {
   });
 
   updateProjectState(project.id, { status: "provisioning", error: null });
+  await loadHostedDatabase(job, project.id, secretValues);
   log(job, secretValues, `mode ${coolifyMode()}`);
   log(job, secretValues, `api ${addresses.canonicalApiUrl}`);
   log(job, secretValues, `panel ${addresses.canonicalPanelUrl}`);
@@ -205,6 +210,53 @@ async function remove(job: Job): Promise<void> {
   removeProject(project.id);
 }
 
+async function loadHostedDatabase(job: Job, projectId: string, secretValues: string[]): Promise<void> {
+  const plan = readImportPlan(projectId);
+  if (!plan?.connectionString || plan.dumped) return;
+  log(job, secretValues, "reading Auth accounts and tables from the hosted Supabase database");
+  try {
+    const counts = await writeCloudRestore(plan.connectionString, restoreSqlPath(projectId));
+    const env = readEnv(projectId);
+    const base = plan.panelBaseUrl.replace(/\/$/, "");
+    env.CSM_RESTORE_URL = { value: `${base}/api/db-restore/${plan.token}`, secret: true };
+    env.CSM_RESTORE_TOKEN = { value: plan.token, secret: true };
+    writeProjectEnv(projectId, env);
+    saveImportPlan(projectId, { ...plan, connectionString: undefined, dumped: true });
+    log(job, secretValues, `saved ${counts.users} auth users and ${counts.tables} public tables for the new database`);
+    log(job, secretValues, "the new database downloads that copy on first start, including auth.users");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not read the hosted database.";
+    let text = message.split(plan.connectionString).join("[redacted]");
+    try {
+      const password = decodeURIComponent(new URL(plan.connectionString).password);
+      if (password) text = text.split(password).join("[redacted]");
+    } catch {
+      // The connection string was already removed above.
+    }
+    throw new Error(scrubSecrets(text, secretValues));
+  }
+}
+
+async function finishCloudImport(projectId: string, apiUrl: string): Promise<string | null> {
+  const plan = readImportPlan(projectId);
+  if (!plan?.dumped || plan.storageCopied || !plan.sourceApiUrl) return null;
+  if (coolifyMode() !== "live") return null;
+  try {
+    const result = await copyStorageFiles({
+      sourceUrl: plan.sourceApiUrl,
+      targetUrl: apiUrl,
+      serviceRoleKey: readSecrets(projectId).serviceRoleKey,
+    });
+    saveImportPlan(projectId, { ...plan, storageCopied: true, storageFailures: result.failed });
+    if (result.failed > 0) return `Auth accounts and tables were copied. ${result.failed} storage files could not be copied.`;
+    return null;
+  } catch {
+    const failures = (plan.storageFailures || 0) + 1;
+    saveImportPlan(projectId, { ...plan, storageCopied: failures >= 5, storageFailures: failures });
+    return failures >= 5 ? "Auth accounts and tables were copied. Storage files could not be copied." : null;
+  }
+}
+
 function safeSecretValues(projectId: string): string[] {
   try {
     return Object.values(readSecrets(projectId));
@@ -310,7 +362,15 @@ async function watchStarting(): Promise<void> {
       const ready = serviceReadiness(payload);
       const report = containerReport(payload);
       if (ready === "running") {
-        updateProjectState(project.id, { status: "running", error: null });
+        const addresses = describeAddresses({
+          apiHost: project.apiHost,
+          studioHost: project.studioHost,
+          scheme: project.scheme,
+          customDomain: project.customDomain,
+          panelHost: project.panelHost,
+        });
+        const warning = await finishCloudImport(project.id, addresses.canonicalApiUrl);
+        updateProjectState(project.id, { status: "running", error: warning });
         continue;
       }
       if (ready === "failed") {

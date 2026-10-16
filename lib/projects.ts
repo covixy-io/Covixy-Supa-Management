@@ -4,6 +4,7 @@ import { decryptJson, encryptJson } from "@/lib/crypto";
 import { hostsFor, validateApex, validateSlug } from "@/lib/hosts";
 import { applyAddressEnv, parseScheme, resolveAddressInput } from "@/lib/urls";
 import { parseArchive, retargetArchiveEnv, secretsFromEnv, ARCHIVE_FORMAT, type ProjectArchive } from "@/lib/archive";
+import { deleteImportFiles, newImportToken, saveImportPlan } from "@/lib/cloud-import";
 import { capacity } from "@/lib/capacity";
 import { reserveFromSpecs, type StoredServerSpecs } from "@/lib/server-specs";
 import { readStoredSpecs } from "@/lib/specs-sync";
@@ -343,6 +344,107 @@ export function createProject(input: {
   return project;
 }
 
+export function createImportedProject(input: {
+  name: string;
+  slug: string;
+  connectionString: string;
+  jwtSecret: string;
+  anonKey: string;
+  serviceRoleKey: string;
+  studioPassword: string;
+  sourceApiUrl: string;
+  panelBaseUrl: string;
+}): Project {
+  const name = input.name.trim().replace(/\s+/g, " ");
+  const slug = input.slug.trim().toLowerCase();
+  if (name.length < 1 || name.length > 80) throw new PanelError("Name must be 1–80 characters.");
+  const slugError = validateSlug(slug);
+  if (slugError) throw new PanelError(slugError);
+  const apex = panelApex();
+  const apexError = validateApex(apex);
+  if (apexError) throw new PanelError(apexError);
+  const resolved = resolveAddressInput({ slug, apex, scheme: "https", customDomain: "", panelHost: "" });
+  if (resolved.error) throw new PanelError(resolved.error);
+  const addresses = resolved.addresses;
+  assertHostsFree([addresses.apiHost, addresses.studioHost].filter(Boolean));
+  const room = capacitySnapshot();
+  if (!room.canCreate) {
+    throw new PanelError(
+      `Not enough RAM. ${room.freeMb} MB free after the ${room.reserveMb} MB reserve, and a stack needs ${room.stackRamMb} MB.`,
+    );
+  }
+
+  const generated = generateStackSecrets();
+  const secrets: StackSecrets = {
+    ...generated,
+    jwtSecret: input.jwtSecret.trim(),
+    anonKey: input.anonKey.trim(),
+    serviceRoleKey: input.serviceRoleKey.trim(),
+    dashboardPassword: input.studioPassword.trim() || generated.dashboardPassword,
+  };
+  const id = randomUUID();
+  const timestamp = now();
+  const database = getDb();
+  const env = applyAddressEnv(stackEnv({ name, slug, apiUrl: addresses.canonicalApiUrl, secrets }), addresses);
+  const source = input.sourceApiUrl.trim().replace(/\/$/, "");
+  if (source) {
+    const current = env.ADDITIONAL_REDIRECT_URLS?.value || "";
+    env.ADDITIONAL_REDIRECT_URLS = { value: [current, source].filter(Boolean).join(","), secret: false };
+  }
+  const packed = encryptJson(secrets);
+  const envPacked = encryptJson(env);
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database
+      .prepare(
+        `INSERT INTO projects (
+          id, name, slug, status, api_host, studio_host, template_id, template_version,
+          postgres_major, ram_mb, url_scheme, custom_domain, panel_host, volume_key, created_at, updated_at
+        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        name,
+        slug,
+        addresses.apiHost,
+        addresses.studioHost,
+        TEMPLATE.id,
+        TEMPLATE.version,
+        TEMPLATE.postgresMajor,
+        TEMPLATE.ramMb,
+        addresses.scheme,
+        addresses.customDomain,
+        addresses.panelHost,
+        id,
+        timestamp,
+        timestamp,
+      );
+    database.prepare("INSERT INTO secrets (project_id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?)").run(id, packed.ciphertext, packed.nonce, timestamp);
+    database.prepare("INSERT INTO project_env (project_id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?)").run(id, envPacked.ciphertext, envPacked.nonce, timestamp);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    if (error instanceof Error && error.message.includes("UNIQUE")) throw new PanelError("A project with that slug already exists.");
+    throw error;
+  }
+  saveImportPlan(id, {
+    connectionString: input.connectionString,
+    sourceApiUrl: source,
+    panelBaseUrl: input.panelBaseUrl.replace(/\/$/, ""),
+    token: newImportToken(),
+  });
+  const project = getProject(id);
+  if (!project) throw new PanelError("Project was not saved.");
+  enqueue(project, "provision");
+  writeAudit("project.imported", project, "Queued a copy from hosted Supabase");
+  return project;
+}
+
+export function writeProjectEnv(projectId: string, env: Record<string, EnvVar>): void {
+  if (!getProject(projectId)) throw new PanelError("Project not found.");
+  saveEnv(projectId, env);
+}
+
 export function updateProjectAddresses(
   projectId: string,
   input: { scheme: string; customDomain: string; panelHost: string },
@@ -650,6 +752,115 @@ export function restoreProject(input: unknown, slugOverride?: string): Project {
   return project;
 }
 
+export function copyProject(sourceId: string, input: { name: string; slug: string }): Project {
+  const source = getProject(sourceId);
+  if (!source) throw new PanelError("Project not found.");
+  assertKeysLocal(source);
+  if (!["running", "paused", "failed"].includes(source.status)) {
+    throw new PanelError("Wait until the original stack is running or paused, then copy it.");
+  }
+  const name = input.name.trim().replace(/\s+/g, " ");
+  if (name.length < 1 || name.length > 80) throw new PanelError("Name must be 1 to 80 characters.");
+  const slug = input.slug.trim().toLowerCase();
+  const slugError = validateSlug(slug);
+  if (slugError) throw new PanelError(slugError);
+  if (slug === source.slug) throw new PanelError("The copy needs its own slug. The original keeps this one.");
+  const apex = panelApex();
+  const apexError = validateApex(apex);
+  if (apexError) throw new PanelError(apexError);
+  const resolved = resolveAddressInput({
+    slug,
+    apex,
+    scheme: source.scheme,
+    customDomain: "",
+    panelHost: "",
+  });
+  if (resolved.error) throw new PanelError(resolved.error);
+  const addresses = resolved.addresses;
+  assertHostsFree(
+    [addresses.apiHost, addresses.studioHost, addresses.customDomain || "", addresses.panelHost || ""].filter(Boolean),
+  );
+  const sharedVolume =
+    source.volumeKey ||
+    (source.coolifyServiceUuid && !source.coolifyServiceUuid.startsWith("rehearsal-")
+      ? `svc:${source.coolifyServiceUuid}`
+      : null);
+  const willPause = Boolean(sharedVolume) && (source.status === "running" || source.status === "failed");
+  const room = capacitySnapshot();
+  const sourceCounts =
+    (RAM_STATUSES as readonly string[]).includes(source.status) ||
+    (source.status === "failed" && Boolean(source.coolifyServiceUuid));
+  const freed = willPause && sourceCounts ? room.stackRamMb : 0;
+  if (room.freeMb + freed < room.stackRamMb) {
+    throw new PanelError(
+      `Not enough RAM. ${room.freeMb} MB free after the ${room.reserveMb} MB reserve, and a stack needs ${room.stackRamMb} MB.`,
+    );
+  }
+
+  if (willPause) requestPause(source.id);
+
+  const env = applyAddressEnv(readEnv(source.id), addresses);
+  if (env.STUDIO_DEFAULT_PROJECT) env.STUDIO_DEFAULT_PROJECT = { ...env.STUDIO_DEFAULT_PROJECT, value: name };
+  const secrets = secretsFromEnv(env);
+  const id = randomUUID();
+  const timestamp = now();
+  const packed = encryptJson(secrets);
+  const envPacked = encryptJson(env);
+  const database = getDb();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database
+      .prepare(
+        `INSERT INTO projects (
+          id, name, slug, status, api_host, studio_host, template_id, template_version,
+          postgres_major, ram_mb, url_scheme, custom_domain, panel_host, volume_key, created_at, updated_at
+        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        name,
+        slug,
+        addresses.apiHost,
+        addresses.studioHost,
+        TEMPLATE.id,
+        TEMPLATE.version,
+        source.postgresMajor,
+        TEMPLATE.ramMb,
+        addresses.scheme,
+        addresses.customDomain,
+        addresses.panelHost,
+        sharedVolume || id,
+        timestamp,
+        timestamp,
+      );
+    database
+      .prepare("INSERT INTO secrets (project_id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?)")
+      .run(id, packed.ciphertext, packed.nonce, timestamp);
+    database
+      .prepare("INSERT INTO project_env (project_id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?)")
+      .run(id, envPacked.ciphertext, envPacked.nonce, timestamp);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    if (error instanceof Error && error.message.includes("UNIQUE")) {
+      throw new PanelError("A project with that slug already exists.");
+    }
+    throw error;
+  }
+
+  const project = getProject(id);
+  if (!project) throw new PanelError("Project was not copied.");
+  enqueue(project, "provision");
+  writeAudit(
+    "project.copied",
+    project,
+    sharedVolume
+      ? `Copied ${source.slug} with the same keys and database files`
+      : `Copied ${source.slug} with the same keys. The original database files stay on that stack`,
+  );
+  return project;
+}
+
 function requireProject(id: string, statuses: ProjectStatus[], label: string): Project {
   const project = getProject(id);
   if (!project) throw new PanelError("Project not found.");
@@ -801,6 +1012,7 @@ export function readEnv(projectId: string): Record<string, EnvVar> {
 
 export function listEnvPublic(projectId: string): PublicEnv[] {
   return Object.entries(readEnv(projectId))
+    .filter(([key]) => key !== "CSM_RESTORE_URL" && key !== "CSM_RESTORE_TOKEN")
     .map(([key, item]) => ({ key, secret: item.secret, value: item.secret ? null : item.value }))
     .sort((a, b) => Number(b.secret) - Number(a.secret) || a.key.localeCompare(b.key));
 }
@@ -878,6 +1090,7 @@ export function updateProjectState(
 }
 
 export function removeProject(id: string): void {
+  deleteImportFiles(id);
   getDb().prepare("DELETE FROM projects WHERE id = ?").run(id);
 }
 

@@ -30,7 +30,7 @@ export async function Shell({ children }: { children: React.ReactNode }) {
       <aside className="border-line bg-surface flex w-full flex-col gap-5 border-b px-4 py-4 md:sticky md:top-0 md:h-screen md:w-64 md:shrink-0 md:border-r md:border-b-0 md:px-4 md:py-5 md:pb-16">
         <div className="flex items-center justify-between gap-3 px-1">
           <Link href="/projects" className="flex items-center gap-3">
-            <span className="bg-blue grid h-10 w-10 place-items-center rounded-2xl text-lg font-bold text-white">S</span>
+            <span className="bg-blue grid h-10 w-10 place-items-center rounded-lg text-lg font-bold text-white">S</span>
             <span>
               <span className="text-muted block text-[11px] font-semibold tracking-wide">COVIXY</span>
               <span className="block text-lg leading-tight font-bold">Supa</span>
@@ -46,7 +46,7 @@ export async function Shell({ children }: { children: React.ReactNode }) {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium ${
+                className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium ${
                   on ? "bg-blue text-white" : "text-ink hover:bg-blue-soft"
                 }`}
               >
@@ -56,7 +56,7 @@ export async function Shell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="bg-bg mt-auto hidden rounded-2xl p-3 md:block">
+        <div className="bg-bg mt-auto hidden rounded-xl p-3 md:block">
           <p className="text-muted text-[11px] font-semibold tracking-wide">CONNECTION</p>
           <p className={`mt-1 text-sm font-semibold ${mode === "live" ? "text-blue" : "text-warn"}`}>
             {mode === "live" ? "Coolify live" : "Rehearsal"}

@@ -1,24 +1,17 @@
-import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { refreshSpecsAction } from "@/app/actions";
+import { CapacityTable } from "@/components/capacity-table";
 import { PageHeader } from "@/components/page-header";
+import { LoadHistory } from "@/components/load-history";
 import { ServerPicture } from "@/components/server-picture";
-import { StatusLamp } from "@/components/status-lamp";
 import { listSamples, projectAnalytics, recordSampleIfDue } from "@/lib/analytics";
-import { formatWhen } from "@/lib/format";
 import { refreshServerSpecs } from "@/lib/specs-sync";
-
-function pct(value: number): string {
-  return `${Math.round(value * 100)}%`;
-}
 
 export default async function CapacityPage() {
   await refreshServerSpecs();
   recordSampleIfDue();
   const room = projectAnalytics();
   const samples = listSamples();
-  const span = Math.max(room.availableMb, 1);
-  const peak = Math.max(span, ...samples.map((sample) => sample.usedMb), 1);
 
   return (
     <div>
@@ -74,68 +67,20 @@ export default async function CapacityPage() {
         </div>
       </div>
 
-      <div className="card mt-4 overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="text-muted text-xs uppercase">
-            <tr className="border-line border-b">
-              <th className="px-4 py-3 font-medium">Project</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">RAM</th>
-              <th className="hidden px-4 py-3 font-medium md:table-cell">Of capacity</th>
-              <th className="hidden px-4 py-3 font-medium md:table-cell">Of load</th>
-              <th className="px-4 py-3 font-medium">Containers</th>
-            </tr>
-          </thead>
-          <tbody>
-            {room.projects.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="text-muted px-4 py-6">
-                  No projects yet.
-                </td>
-              </tr>
-            ) : (
-              room.projects.map((project) => (
-                <tr key={project.id} className="border-line border-b last:border-0">
-                  <td className="px-4 py-3">
-                    <Link href={`/projects/${project.id}`} className="font-semibold hover:text-blue">
-                      {project.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusLamp status={project.status} />
-                  </td>
-                  <td className="px-4 py-3">{project.loadMb} MB</td>
-                  <td className="hidden px-4 py-3 md:table-cell">{pct(project.capacityShare)}</td>
-                  <td className="hidden px-4 py-3 md:table-cell">{pct(project.loadShare)}</td>
-                  <td className="px-4 py-3">{project.containers}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <CapacityTable
+        projects={room.projects.map((project) => ({
+          id: project.id,
+          name: project.name,
+          status: project.status,
+          loadMb: project.loadMb,
+          capacityShare: project.capacityShare,
+          loadShare: project.loadShare,
+          containers: project.containers,
+        }))}
+      />
 
-      <div className="card mt-4 p-4">
-        <p className="text-muted text-xs font-medium">Load history</p>
-        {samples.length === 0 ? (
-          <p className="text-muted mt-3 text-sm">No samples yet.</p>
-        ) : (
-          <div className="mt-4 flex h-32 items-end gap-1">
-            {samples.map((sample) => (
-              <div
-                key={sample.at}
-                className="relative h-full min-w-2 flex-1"
-                title={`${formatWhen(sample.at)} · ${sample.usedMb} MB of ${sample.availableMb} MB capacity`}
-              >
-                <div
-                  className="bg-blue absolute right-0 bottom-0 left-0 rounded-sm"
-                  style={{ height: `${Math.max(4, (sample.usedMb / peak) * 100)}%` }}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-        <p className="text-muted mt-3 text-xs">A sample is stored at most every five minutes. The bars are load against the capacity at that time.</p>
+      <div className="mt-4">
+        <LoadHistory samples={samples} capacityMb={room.availableMb} />
       </div>
     </div>
   );
