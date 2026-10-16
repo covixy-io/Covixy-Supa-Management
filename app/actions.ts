@@ -22,7 +22,7 @@ import {
 } from "@/lib/projects";
 import { signSession } from "@/lib/session";
 import { refreshServerSpecs } from "@/lib/specs-sync";
-import { completeSetup, serverSessionSecret, SetupError, verifyPanelPassword } from "@/lib/settings";
+import { completeSetup, serverSessionSecret, SetupError, updateCoolifyConnection, verifyPanelPassword } from "@/lib/settings";
 import { processQueue } from "@/lib/worker";
 
 export type ActionState = { error: string } | null;
@@ -246,6 +246,25 @@ export async function refreshSpecsAction(): Promise<void> {
   revalidatePath("/capacity");
   revalidatePath("/settings");
   revalidatePath("/projects/new");
+}
+
+export async function updateCoolifyAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  await assertPanelAccess();
+  try {
+    updateCoolifyConnection({
+      url: String(formData.get("coolifyUrl") ?? ""),
+      token: String(formData.get("coolifyToken") ?? ""),
+      project: String(formData.get("coolifyProject") ?? ""),
+      server: String(formData.get("coolifyServer") ?? ""),
+      environment: String(formData.get("coolifyEnvironment") ?? ""),
+    });
+    revalidatePath("/settings");
+    revalidatePath("/projects");
+    return null;
+  } catch (error) {
+    unstable_rethrow(error);
+    return { error: message(error) };
+  }
 }
 
 export async function checkCoolifyAction(): Promise<{ ok: true; servers: { name: string; uuid: string }[] } | { ok: false; error: string }> {

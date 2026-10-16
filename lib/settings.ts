@@ -60,6 +60,80 @@ export function coolifyToken(): string {
   return decryptJson<string>(ciphertext, nonce);
 }
 
+export function normalizeCoolifyToken(raw: string): string {
+  let token = raw.trim();
+  for (let pass = 0; pass < 3; pass += 1) {
+    const unquoted =
+      token.length >= 2 &&
+      ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'")))
+        ? token.slice(1, -1).trim()
+        : token;
+    const next = unquoted.replace(/^Bearer\s+/i, "").trim();
+    if (next === token) break;
+    token = next;
+  }
+  return token.replace(/\s+/g, "");
+}
+
+export function coolifyOverrides() {
+  return {
+    url: Boolean(process.env.COOLIFY_API_URL),
+    token: Boolean(process.env.COOLIFY_API_TOKEN),
+    project: Boolean(process.env.COOLIFY_PROJECT_UUID),
+    server: Boolean(process.env.COOLIFY_SERVER_UUID),
+    environment: Boolean(process.env.COOLIFY_ENVIRONMENT_NAME),
+  };
+}
+
+export function updateCoolifyConnection(input: {
+  url: string;
+  token: string;
+  project: string;
+  server: string;
+  environment: string;
+}): void {
+  const locked = coolifyOverrides();
+  if (locked.url && locked.token && locked.project && locked.server) {
+    throw new SetupError(
+      "Coolify is set from environment variables. Change COOLIFY_API_TOKEN where this panel runs, keep the full token including the vertical bar, and redeploy.",
+    );
+  }
+  if (locked.token && input.token.trim()) {
+    throw new SetupError(
+      "COOLIFY_API_TOKEN is set where this panel runs, so this page cannot replace it. Edit that variable, keep the full token including the vertical bar, and redeploy.",
+    );
+  }
+
+  const current = coolifyConfig();
+  const url = (locked.url ? current.url : input.url).trim().replace(/\/$/, "");
+  const project = (locked.project ? current.project : input.project).trim();
+  const server = (locked.server ? current.server : input.server).trim();
+  const environment = (locked.environment ? current.environment : input.environment).trim() || "production";
+  const token = locked.token || !input.token.trim() ? current.token : normalizeCoolifyToken(input.token);
+
+  if (!url || !token || !project || !server) {
+    throw new SetupError("Fill the Coolify URL, token, project, and server.");
+  }
+  if (!/^https?:\/\//i.test(url)) throw new SetupError("Coolify URL should start with https://.");
+  if (!token.includes("|")) {
+    throw new SetupError(
+      locked.token
+        ? "COOLIFY_API_TOKEN is missing the vertical bar. Set the whole token, like 4|secret, where this panel runs, and redeploy."
+        : "Paste the whole API token from Keys & Tokens. It looks like 4|secret, with a number, a vertical bar, and the secret.",
+    );
+  }
+
+  if (!locked.url) setSetting("coolify_api_url", url);
+  if (!locked.project) setSetting("coolify_project_uuid", project);
+  if (!locked.server) setSetting("coolify_server_uuid", server);
+  if (!locked.environment) setSetting("coolify_environment_name", environment);
+  if (!locked.token && input.token.trim()) {
+    const packed = encryptJson(token);
+    setSetting("coolify_token_ciphertext", packed.ciphertext);
+    setSetting("coolify_token_nonce", packed.nonce);
+  }
+}
+
 export function coolifyConfig() {
   return {
     url: process.env.COOLIFY_API_URL || getSetting("coolify_api_url"),

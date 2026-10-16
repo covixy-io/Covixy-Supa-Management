@@ -1,18 +1,25 @@
 import { CoolifyCheck } from "@/components/coolify-check";
+import { CoolifySettings } from "@/components/coolify-settings";
 import { PageHeader } from "@/components/page-header";
 import { passwordEnabled } from "@/lib/auth";
 import { encryptionKeySource } from "@/lib/crypto";
 import { coolifyMode } from "@/lib/coolify";
 import { refreshSpecsAction } from "@/app/actions";
 import { serverReserveMb, serverSpecs } from "@/lib/projects";
-import { coolifyConfig, isInstalled, panelApex, serverName } from "@/lib/settings";
+import { coolifyConfig, coolifyOverrides, isInstalled, panelApex, serverName } from "@/lib/settings";
 import { TEMPLATE } from "@/lib/template";
 
-function Flag({ on, label }: { on: boolean; label: string }) {
+function connectionState(filled: boolean, fromEnv: boolean): "empty" | "saved" | "environment" {
+  if (fromEnv) return "environment";
+  return filled ? "saved" : "empty";
+}
+
+function Flag({ label, state }: { label: string; state: "empty" | "saved" | "environment" }) {
+  const text = state === "environment" ? "From environment" : state === "saved" ? "Saved" : "Empty";
   return (
     <div className="border-line flex items-center justify-between gap-4 border-b py-2 text-sm last:border-0">
       <span>{label}</span>
-      <span className={on ? "font-semibold text-blue" : "text-muted"}>{on ? "Set" : "Empty"}</span>
+      <span className={state === "empty" ? "text-muted" : "font-semibold text-blue"}>{text}</span>
     </div>
   );
 }
@@ -20,6 +27,7 @@ function Flag({ on, label }: { on: boolean; label: string }) {
 export default function SettingsPage() {
   const mode = coolifyMode();
   const coolify = coolifyConfig();
+  const overrides = coolifyOverrides();
   const specs = serverSpecs();
 
   return (
@@ -75,13 +83,21 @@ export default function SettingsPage() {
 
       <h2 className="mt-8 text-sm font-semibold">Connection</h2>
       <div className="card mt-3 px-4">
-        <Flag on={Boolean(coolify.url)} label="Coolify URL" />
-        <Flag on={Boolean(coolify.token)} label="Coolify token" />
-        <Flag on={Boolean(coolify.project)} label="Coolify project" />
-        <Flag on={Boolean(coolify.server)} label="Coolify server" />
-        <Flag on={passwordEnabled()} label="Panel password" />
-        <Flag on={encryptionKeySource() === "env"} label="Encryption key from env" />
+        <Flag label="Coolify URL" state={connectionState(Boolean(coolify.url), overrides.url)} />
+        <Flag label="Coolify token" state={connectionState(Boolean(coolify.token), overrides.token)} />
+        <Flag label="Coolify project" state={connectionState(Boolean(coolify.project), overrides.project)} />
+        <Flag label="Coolify server" state={connectionState(Boolean(coolify.server), overrides.server)} />
+        <Flag label="Panel password" state={passwordEnabled() ? "saved" : "empty"} />
+        <Flag label="Encryption key" state={encryptionKeySource() === "env" ? "environment" : "saved"} />
       </div>
+      <CoolifySettings
+        url={coolify.url}
+        project={coolify.project}
+        server={coolify.server}
+        environment={coolify.environment}
+        hasToken={Boolean(coolify.token)}
+        locked={overrides}
+      />
       <p className="mt-4 text-sm">Mode is {mode}.</p>
       <CoolifyCheck />
 

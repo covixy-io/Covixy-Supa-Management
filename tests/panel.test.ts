@@ -169,3 +169,58 @@ test("rehearsal create, pause, resume, and delete", async () => {
   assert.throws(() => projects.restoreProject(archive), /already used/);
   assert.throws(() => projects.restoreProject({ format: "nope" }), /offline project/);
 });
+
+test("settings save the full Coolify token", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "csm-token-"));
+  process.env.PANEL_DB_PATH = path.join(dir, "panel.db");
+  process.env.PANEL_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+  delete process.env.COOLIFY_API_URL;
+  delete process.env.COOLIFY_API_TOKEN;
+  delete process.env.COOLIFY_PROJECT_UUID;
+  delete process.env.COOLIFY_SERVER_UUID;
+  delete process.env.COOLIFY_ENVIRONMENT_NAME;
+
+  const db = await import("../lib/db.ts");
+  const crypto = await import("../lib/crypto.ts");
+  db.resetDbForTests();
+  crypto.resetEncryptionKeyForTests();
+  const settings = await import("../lib/settings.ts");
+
+  assert.equal(settings.normalizeCoolifyToken('  Bearer "8|secret-part"  '), "8|secret-part");
+  settings.updateCoolifyConnection({
+    url: "https://coolify.example.com/",
+    token: "Bearer 8|secret-part",
+    project: "project-uuid",
+    server: "server-uuid",
+    environment: "production",
+  });
+  assert.equal(settings.coolifyConfig().url, "https://coolify.example.com");
+  assert.equal(settings.coolifyToken(), "8|secret-part");
+  assert.throws(
+    () =>
+      settings.updateCoolifyConnection({
+        url: "https://coolify.example.com",
+        token: "secret-only",
+        project: "project-uuid",
+        server: "server-uuid",
+        environment: "production",
+      }),
+    /vertical bar/,
+  );
+  assert.equal(settings.coolifyToken(), "8|secret-part");
+
+  process.env.COOLIFY_API_TOKEN = "9|from-env";
+  assert.equal(settings.coolifyToken(), "9|from-env");
+  assert.throws(
+    () =>
+      settings.updateCoolifyConnection({
+        url: "https://coolify.example.com",
+        token: "10|other",
+        project: "project-uuid",
+        server: "server-uuid",
+        environment: "production",
+      }),
+    /COOLIFY_API_TOKEN/,
+  );
+  delete process.env.COOLIFY_API_TOKEN;
+});

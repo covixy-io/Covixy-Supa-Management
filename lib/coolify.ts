@@ -33,6 +33,10 @@ async function coolifyFetch(path: string, init?: RequestInit): Promise<unknown> 
     } catch {
       // Coolify sometimes returns plain text.
     }
+    if (response.status === 401) {
+      message =
+        "Unauthenticated. Create an API token under Keys & Tokens and paste the whole line, including the number and the vertical bar.";
+    }
     throw new Error(`Coolify ${response.status}: ${message}`);
   }
   if (!text) return {};
