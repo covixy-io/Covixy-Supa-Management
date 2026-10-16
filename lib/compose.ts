@@ -3,11 +3,27 @@ import { TEMPLATE } from "@/lib/template";
 const ROLES_SQL = [
   "\\set pgpass `echo \"$POSTGRES_PASSWORD\"`",
   "",
-  "ALTER USER authenticator WITH PASSWORD :'pgpass';",
-  "ALTER USER pgbouncer WITH PASSWORD :'pgpass';",
-  "ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';",
-  "ALTER USER supabase_functions_admin WITH PASSWORD :'pgpass';",
-  "ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';",
+  "DO $do$",
+  "DECLARE",
+  "  role_name text;",
+  "BEGIN",
+  "  FOREACH role_name IN ARRAY ARRAY[",
+  "    'postgres',",
+  "    'supabase_admin',",
+  "    'authenticator',",
+  "    'pgbouncer',",
+  "    'supabase_auth_admin',",
+  "    'supabase_functions_admin',",
+  "    'supabase_storage_admin',",
+  "    'supabase_replication_admin'",
+  "  ]",
+  "  LOOP",
+  "    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN",
+  "      EXECUTE format('ALTER USER %I WITH PASSWORD %L', role_name, :'pgpass');",
+  "    END IF;",
+  "  END LOOP;",
+  "END",
+  "$do$;",
   "",
 ].join("\n");
 
@@ -20,20 +36,59 @@ const JWT_SQL = [
 
 const SCHEMA_SQL = `
 DO $$
+DECLARE
+  fn regprocedure;
+  rel record;
 BEGIN
   IF to_regclass('auth.users') IS NOT NULL THEN
     ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS banned_until timestamptz;
     ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
     ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS is_sso_user boolean NOT NULL DEFAULT false;
     ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS is_anonymous boolean NOT NULL DEFAULT false;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin')
+     AND EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') THEN
+    EXECUTE 'ALTER SCHEMA auth OWNER TO supabase_auth_admin';
+    FOR fn IN
+      SELECT p.oid::regprocedure
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'auth' AND p.prokind = 'f'
+    LOOP
+      EXECUTE format('ALTER FUNCTION %s OWNER TO supabase_auth_admin', fn);
+    END LOOP;
+    FOR rel IN
+      SELECT c.relname, c.relkind
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'auth' AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+    LOOP
+      IF rel.relkind = 'S' THEN
+        EXECUTE format('ALTER SEQUENCE auth.%I OWNER TO supabase_auth_admin', rel.relname);
+      ELSIF rel.relkind IN ('v', 'm') THEN
+        EXECUTE format('ALTER VIEW auth.%I OWNER TO supabase_auth_admin', rel.relname);
+      ELSE
+        EXECUTE format('ALTER TABLE auth.%I OWNER TO supabase_auth_admin', rel.relname);
+      END IF;
+    END LOOP;
     GRANT USAGE ON SCHEMA auth TO supabase_auth_admin;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA auth TO supabase_auth_admin;
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA auth TO supabase_auth_admin;
   END IF;
-  IF to_regclass('storage.buckets') IS NOT NULL THEN
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_storage_admin')
+     AND EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'storage') THEN
+    EXECUTE 'ALTER SCHEMA storage OWNER TO supabase_storage_admin';
     GRANT USAGE ON SCHEMA storage TO supabase_storage_admin;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA storage TO supabase_storage_admin;
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA storage TO supabase_storage_admin;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    CREATE SCHEMA IF NOT EXISTS _realtime;
+    EXECUTE 'ALTER SCHEMA _realtime OWNER TO supabase_admin';
+    GRANT ALL ON SCHEMA _realtime TO supabase_admin;
   END IF;
 END $$;
 `.trim();
@@ -148,7 +203,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
@@ -191,7 +246,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
     environment:
       PGRST_DB_URI: postgres://authenticator:\${POSTGRES_PASSWORD}@\${POSTGRES_HOST}:\${POSTGRES_PORT}/\${POSTGRES_DB}
       PGRST_DB_SCHEMAS: \${PGRST_DB_SCHEMAS}
@@ -213,7 +268,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
     environment:
       PORT: 4000
       DB_HOST: \${POSTGRES_HOST}
@@ -251,7 +306,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       rest:
         condition: service_started
       imgproxy:
@@ -288,7 +343,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
     environment:
       PG_META_PORT: 8080
       PG_META_DB_HOST: \${POSTGRES_HOST}

@@ -139,7 +139,10 @@ test("compose placeholders are all given to Coolify", () => {
   );
   const roles = blobs[0] || "";
   assert.match(roles, /\$POSTGRES_PASSWORD/);
+  assert.match(roles, /supabase_storage_admin/);
+  assert.match(roles, /supabase_admin/);
   assert.ok(blobs.some((text) => text.includes("banned_until")));
+  assert.ok(blobs.some((text) => text.includes("OWNER TO supabase_auth_admin")));
   assert.match(yaml, /SUPABASE_PUBLISHABLE_KEY/);
   assert.equal(scrubSecrets(`failed ${secrets.serviceRoleKey}`, [secrets.serviceRoleKey]).includes("eyJ"), false);
   assert.equal(scrubSecrets("template covixy-supabase", ["supabase", secrets.serviceRoleKey]), "template covixy-supabase");
