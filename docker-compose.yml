@@ -1,0 +1,15 @@
+services:
+  panel:
+    build: .
+    restart: unless-stopped
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      PANEL_DB_PATH: /app/data/panel.db
+    volumes:
+      - panel-data:/app/data
+    expose:
+      - "3000"
+
+volumes:
+  panel-data:
