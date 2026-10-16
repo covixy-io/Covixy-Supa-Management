@@ -1,10 +1,12 @@
 import { recordSampleIfDue } from "@/lib/analytics";
 import { composePlaceholders, renderCompose } from "@/lib/compose";
 import {
+  containerReport,
   createService,
   deleteService,
   deleteServicesNamed,
   exitedContainers,
+  releaseDomains,
   getService,
   hostsFromCoolifyService,
   leftoverServices,
@@ -68,7 +70,7 @@ async function provision(job: Job): Promise<void> {
   log(job, secretValues, `panel ${addresses.canonicalPanelUrl}`);
   log(job, secretValues, `template ${project.templateId} ${project.templateVersion}, postgres ${project.postgresMajor}`);
 
-  const compose = renderCompose(project.slug);
+  const compose = renderCompose(project.slug, project.volumeKey);
   const env = readEnv(project.id);
   const missing = composePlaceholders(compose).filter((key) => !(key in env));
   if (missing.length) throw new Error(`Compose is missing env: ${missing.join(", ")}`);
@@ -76,7 +78,14 @@ async function provision(job: Job): Promise<void> {
   let uuid = project.coolifyServiceUuid;
   const existing = Boolean(uuid);
   if (!uuid) {
-    log(job, secretValues, "removing any previous service with this name, including its database");
+    log(job, secretValues, "removing any previous service with this name or this domain, including its database");
+    const keep = new Set(
+      listProjects().map((item) => item.coolifyServiceUuid).filter((uuid): uuid is string => Boolean(uuid)),
+    );
+    await releaseDomains(
+      [addresses.publicApiHost, addresses.effectivePanelHost, project.apiHost, project.studioHost, project.customDomain || "", project.panelHost || ""],
+      keep,
+    );
     await deleteServicesNamed(`supa-${project.slug}`);
     log(job, secretValues, "creating Coolify service");
     uuid = await createService({
@@ -283,19 +292,32 @@ async function watchStarting(): Promise<void> {
     try {
       const payload = await getService(project.coolifyServiceUuid);
       const ready = serviceReadiness(payload);
-      if (ready === "running") updateProjectState(project.id, { status: "running", error: null });
-      else if (ready === "failed") {
-        const started = new Date(project.updatedAt).getTime();
-        if (Number.isFinite(started) && Date.now() - started < 6 * 60 * 1000) continue;
+      const report = containerReport(payload);
+      if (ready === "running") {
+        updateProjectState(project.id, { status: "running", error: null });
+        continue;
+      }
+      const started = new Date(project.bootAt || project.updatedAt).getTime();
+      const waitedLong = Number.isFinite(started) && Date.now() - started >= 6 * 60 * 1000;
+      if (waitedLong) {
         const names = exitedContainers(payload);
-        const who = names.length ? names.join(", ") : "A container";
+        const why = names.length ? `${names.join(", ")} exited. ` : "";
         updateProjectState(project.id, {
           status: "failed",
-          error: `${who} exited while the stack was starting.`,
+          error: `${why}Still not up: ${report}. The domain returns 404 until gateway is running. Remove this project and create it again for an empty database.`,
+        });
+        continue;
+      }
+      const note = `Waiting on ${report}.`;
+      if (project.error !== note) updateProjectState(project.id, { error: note });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.startsWith("Coolify 404")) {
+        updateProjectState(project.id, {
+          status: "failed",
+          error: "Coolify returned 404 for this service. Remove the project and create it again.",
         });
       }
-    } catch {
-      // A status check can fail while Coolify is still pulling images.
     }
   }
 }

@@ -105,7 +105,7 @@ EOF
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile`;
 }
 
-export function renderCompose(slug: string): string {
+export function renderCompose(slug: string, volumeKey?: string | null): string {
   const rolesB64 = Buffer.from(ROLES_SQL, "utf8").toString("base64");
   const jwtB64 = Buffer.from(JWT_SQL, "utf8").toString("base64");
   const schemaB64 = Buffer.from(SCHEMA_SQL, "utf8").toString("base64");
@@ -349,10 +349,16 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
 ${indent(gatewayBoot(), 8)}
 
 volumes:
-  db:
-  storage:
-  snippets:
+${namedVolumes(volumeKey)}
 `;
+}
+
+function namedVolumes(volumeKey?: string | null): string {
+  const key = volumeKey?.replace(/[^a-zA-Z0-9_-]/g, "") || "";
+  const lines = ["db", "storage", "snippets"].map((name) =>
+    key ? `  ${name}:\n    name: csm-${key}-${name}` : `  ${name}:`,
+  );
+  return lines.join("\n");
 }
 
 export type EnvVar = { value: string; secret: boolean };

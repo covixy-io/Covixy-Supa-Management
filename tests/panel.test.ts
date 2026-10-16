@@ -7,7 +7,7 @@ import { capacity } from "../lib/capacity.ts";
 import { reserveFromSpecs, specsFromCoolify } from "../lib/server-specs.ts";
 import { composePlaceholders, renderCompose, stackEnv } from "../lib/compose.ts";
 import { hostsFor, singleLabelHosts, validateApex, validateSlug } from "../lib/hosts.ts";
-import { hostsFromCoolifyService, leftoverServices, serviceReadiness } from "../lib/coolify.ts";
+import { containerReport, hostsFromCoolifyService, leftoverServices, serviceReadiness } from "../lib/coolify.ts";
 import { describeAddresses } from "../lib/urls.ts";
 import { decodeJwtPayload, generateStackSecrets, scrubSecrets, signJwt } from "../lib/secrets.ts";
 
@@ -70,6 +70,15 @@ test("hosts stay one label under the zone", () => {
     serviceReadiness({ applications: [{ status: "exited" }, { status: "pulling" }] }),
     "starting",
   );
+  assert.equal(
+    containerReport({
+      applications: [
+        { name: "db", status: "running:unhealthy" },
+        { name: "gateway", status: "created" },
+      ],
+    }),
+    "db running:unhealthy, gateway created",
+  );
   assert.deepEqual(
     hostsFromCoolifyService(
       {
@@ -114,6 +123,8 @@ test("compose placeholders are all given to Coolify", () => {
   const missing = [...new Set(composePlaceholders(yaml))].filter((key) => !(key in env));
   assert.deepEqual(missing, []);
   assert.match(yaml, /name: supa-acme/);
+  assert.equal(yaml.includes("csm-"), false);
+  assert.match(renderCompose("acme", "abc"), /name: csm-abc-db/);
   assert.match(yaml, /roles-applied/);
   assert.match(yaml, /SNIPPETS_MANAGEMENT_FOLDER/);
   assert.match(yaml, /supabase\/gotrue:v2\.197\.0/);
@@ -172,6 +183,7 @@ test("rehearsal create, pause, resume, and delete", async () => {
   assert.equal(running?.status, "running");
   assert.equal(running?.keysLocal, true);
   assert.equal(running?.coolifyServiceUuid, "rehearsal-acme");
+  assert.equal(running?.volumeKey, created.id);
   assert.equal(running?.postgresMajor, 17);
 
   const revealed = projects.revealSecret(created.id, "serviceRole");

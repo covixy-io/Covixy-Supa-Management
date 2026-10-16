@@ -121,7 +121,9 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
                 )}
                 <p className="text-muted mt-1 text-xs">{formatWhen(project.createdAt)}</p>
                 {project.status === "starting" ? (
-                  <p className="text-warn mt-1 text-xs">Still booting. The first start can take several minutes.</p>
+                  <p className="text-warn mt-1 text-xs">
+                    {project.error || "Still booting. The domain can return 404 until the gateway is running."}
+                  </p>
                 ) : null}
               </div>
               <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">

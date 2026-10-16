@@ -37,6 +37,8 @@ export type Project = {
   postgresMajor: number;
   coolifyServiceUuid: string | null;
   keysLocal: boolean;
+  volumeKey: string | null;
+  bootAt: string | null;
   ramMb: number;
   error: string | null;
   createdAt: string;

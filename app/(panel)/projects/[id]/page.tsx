@@ -66,11 +66,14 @@ export default async function ProjectPage({
       </div>
       {project.status === "starting" ? (
         <p className="bg-warn-soft text-warn mt-4 max-w-2xl rounded-xl px-4 py-3 text-sm">
-          Starting. Coolify is downloading images and booting containers. This stays on Starting until those containers
-          are up, which often takes several minutes the first time.
+          Starting. The domain can return 404 until the gateway container is running.
+          {project.error ? ` ${project.error}` : " Coolify is still bringing the containers up."} Coolify&apos;s log
+          page can fail to open its terminal; the container status is shown here.
         </p>
       ) : null}
-      {project.error ? <p className="text-danger mt-4 max-w-2xl text-sm">{project.error}</p> : null}
+      {project.status !== "starting" && project.error ? (
+        <p className="text-danger mt-4 max-w-2xl text-sm">{project.error}</p>
+      ) : null}
       {query.error ? <p className="text-danger mt-4 max-w-2xl text-sm">{query.error}</p> : null}
 
       <section className="mt-8 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">

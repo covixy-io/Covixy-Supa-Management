@@ -225,6 +225,22 @@ export async function deleteServicesNamed(name: string): Promise<void> {
   }
 }
 
+export async function releaseDomains(hosts: string[], keep: Set<string>): Promise<void> {
+  if (coolifyMode() !== "live") return;
+  const wanted = new Set(hosts.map((host) => host.toLowerCase()).filter(Boolean));
+  if (!wanted.size) return;
+  for (const service of await listServices()) {
+    if (!service.name.startsWith("supa-") || keep.has(service.uuid)) continue;
+    let found: string[] = [];
+    try {
+      found = hostsInPayload(await getService(service.uuid));
+    } catch {
+      continue;
+    }
+    if (found.some((host) => wanted.has(host))) await deleteService(service.uuid);
+  }
+}
+
 function statusText(value: unknown): string {
   if (typeof value === "string") return value.toLowerCase();
   if (value && typeof value === "object") {
@@ -254,11 +270,7 @@ export function serviceReadiness(payload: unknown): "starting" | "running" | "fa
   return "starting";
 }
 
-export function hostsFromCoolifyService(
-  payload: unknown,
-  slug: string,
-  apex: string,
-): { apiHost: string; studioHost: string } {
+export function hostsInPayload(payload: unknown): string[] {
   const found: string[] = [];
   const visit = (value: unknown): void => {
     if (!value || typeof value !== "object") return;
@@ -275,7 +287,7 @@ export function hostsFromCoolifyService(
     }
   };
   visit(payload);
-  const hosts = [
+  return [
     ...new Set(
       found
         .flatMap((entry) => entry.split(","))
@@ -283,6 +295,14 @@ export function hostsFromCoolifyService(
         .filter((host) => host.includes(".")),
     ),
   ];
+}
+
+export function hostsFromCoolifyService(
+  payload: unknown,
+  slug: string,
+  apex: string,
+): { apiHost: string; studioHost: string } {
+  const hosts = hostsInPayload(payload);
   const studioHost =
     hosts.find((host) => host.startsWith(`${slug}-studio.`)) ||
     hosts.find((host) => host.includes("-studio.")) ||
@@ -293,6 +313,14 @@ export function hostsFromCoolifyService(
 
 function asRows(value: unknown): { name?: unknown; status?: unknown }[] {
   return Array.isArray(value) ? (value as { name?: unknown; status?: unknown }[]) : [];
+}
+
+export function containerReport(payload: unknown): string {
+  const body = payload && typeof payload === "object" ? (payload as { status?: unknown; applications?: unknown; databases?: unknown }) : {};
+  const children = [...asRows(body.applications), ...asRows(body.databases)];
+  const rows = children.length ? children : [{ name: "service", status: body.status }];
+  const parts = rows.map((row) => `${String(row.name || "container")} ${statusText(row.status) || "no status"}`);
+  return parts.length ? parts.join(", ") : "Coolify has not reported any containers yet.";
 }
 
 export function exitedContainers(payload: unknown): string[] {

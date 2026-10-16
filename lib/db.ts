@@ -92,6 +92,8 @@ function migrate(database: DatabaseSync): void {
   if (!names.has("custom_domain")) database.exec("ALTER TABLE projects ADD COLUMN custom_domain TEXT");
   if (!names.has("panel_host")) database.exec("ALTER TABLE projects ADD COLUMN panel_host TEXT");
   if (!names.has("keys_local")) database.exec("ALTER TABLE projects ADD COLUMN keys_local INTEGER NOT NULL DEFAULT 1");
+  if (!names.has("volume_key")) database.exec("ALTER TABLE projects ADD COLUMN volume_key TEXT");
+  if (!names.has("boot_at")) database.exec("ALTER TABLE projects ADD COLUMN boot_at TEXT");
 }
 
 export function getDb(): DatabaseSync {

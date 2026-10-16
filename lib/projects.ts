@@ -27,6 +27,8 @@ type ProjectRow = {
   postgres_major: number;
   coolify_service_uuid: string | null;
   keys_local: number | null;
+  volume_key: string | null;
+  boot_at: string | null;
   ram_mb: number;
   error: string | null;
   created_at: string;
@@ -71,6 +73,8 @@ function mapProject(row: ProjectRow): Project {
     postgresMajor: row.postgres_major,
     coolifyServiceUuid: row.coolify_service_uuid,
     keysLocal: row.keys_local == null || Number(row.keys_local) !== 0,
+    volumeKey: row.volume_key || null,
+    bootAt: row.boot_at || null,
     ramMb: row.ram_mb,
     error: row.error,
     createdAt: row.created_at,
@@ -297,8 +301,8 @@ export function createProject(input: {
       .prepare(
         `INSERT INTO projects (
           id, name, slug, status, api_host, studio_host, template_id, template_version,
-          postgres_major, ram_mb, url_scheme, custom_domain, panel_host, created_at, updated_at
-        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          postgres_major, ram_mb, url_scheme, custom_domain, panel_host, volume_key, created_at, updated_at
+        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -313,6 +317,7 @@ export function createProject(input: {
         addresses.scheme,
         addresses.customDomain,
         addresses.panelHost,
+        id,
         timestamp,
         timestamp,
       );
@@ -604,8 +609,8 @@ export function restoreProject(input: unknown, slugOverride?: string): Project {
       .prepare(
         `INSERT INTO projects (
           id, name, slug, status, api_host, studio_host, template_id, template_version,
-          postgres_major, ram_mb, url_scheme, custom_domain, panel_host, created_at, updated_at
-        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          postgres_major, ram_mb, url_scheme, custom_domain, panel_host, volume_key, created_at, updated_at
+        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -620,6 +625,7 @@ export function restoreProject(input: unknown, slugOverride?: string): Project {
         addresses.scheme,
         addresses.customDomain,
         addresses.panelHost,
+        id,
         timestamp,
         timestamp,
       );
@@ -803,14 +809,17 @@ export function updateProjectState(
 ): void {
   const project = getProject(id);
   if (!project) return;
+  const nextStatus = patch.status ?? project.status;
+  const bootAt = nextStatus === "starting" ? (project.status === "starting" ? project.bootAt : now()) : null;
   getDb()
     .prepare(
-      "UPDATE projects SET status = ?, error = ?, coolify_service_uuid = ?, updated_at = ? WHERE id = ?",
+      "UPDATE projects SET status = ?, error = ?, coolify_service_uuid = ?, boot_at = ?, updated_at = ? WHERE id = ?",
     )
     .run(
-      patch.status ?? project.status,
+      nextStatus,
       patch.error === undefined ? project.error : patch.error,
       patch.coolifyServiceUuid === undefined ? project.coolifyServiceUuid : patch.coolifyServiceUuid,
+      bootAt,
       now(),
       id,
     );
