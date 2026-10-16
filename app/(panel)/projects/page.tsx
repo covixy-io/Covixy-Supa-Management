@@ -2,15 +2,21 @@ import Link from "next/link";
 import { ArrowUpRight, Download, Plus } from "lucide-react";
 import { LiveRefresh } from "@/components/live-refresh";
 import { PageHeader } from "@/components/page-header";
+import { RemoveProject } from "@/components/remove-project";
 import { RestoreProject } from "@/components/restore-project";
 import { isBusy, StatusLamp } from "@/components/status-lamp";
+import { projectAnalytics } from "@/lib/analytics";
 import { coolifyMode } from "@/lib/coolify";
 import { formatWhen } from "@/lib/format";
-import { listProjects } from "@/lib/projects";
-import { describeAddresses } from "@/lib/urls";
+import { TEMPLATE } from "@/lib/template";
+
+function pct(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
 
 export default function ProjectsPage() {
-  const projects = listProjects();
+  const room = projectAnalytics();
+  const projects = room.projects;
   const mode = coolifyMode();
 
   return (
@@ -31,6 +37,36 @@ export default function ProjectsPage() {
           Rehearsal mode. Projects are saved here, and Coolify calls wait until the API URL, token, project, and server are set.
         </p>
       ) : null}
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <div className="card p-4">
+          <p className="text-muted text-xs font-medium">Projects</p>
+          <p className="mt-1 text-2xl font-bold">{projects.length}</p>
+          <p className="text-muted text-xs">{room.activeStacks} counting toward load</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-muted text-xs font-medium">Each stack</p>
+          <p className="mt-1 text-2xl font-bold">{room.stackRamMb} MB</p>
+          <p className="text-muted text-xs">{TEMPLATE.containers} containers while it is running</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-muted text-xs font-medium">Load</p>
+          <p className="mt-1 text-2xl font-bold">{room.usedMb} MB</p>
+          <p className="text-muted text-xs">{pct(room.availableMb > 0 ? room.usedMb / room.availableMb : 0)} of {room.availableMb} MB capacity</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-muted text-xs font-medium">Server</p>
+          <p className="mt-1 text-2xl font-bold">{room.serverRamMb} MB</p>
+          <p className="text-muted text-xs">
+            {room.reserveMb} MB reserved
+            {room.specs?.cpus ? ` · ${room.specs.cpus} CPUs` : ""}
+            {room.specs?.diskMb ? ` · ${room.specs.diskMb} MB disk` : ""}
+            {room.freeMb >= 0 ? ` · ${room.freeMb} MB free` : ` · ${Math.abs(room.freeMb)} MB over`}
+          </p>
+        </div>
+      </div>
+      <p className="text-muted mt-3 text-xs">
+        RAM and containers are the template estimate for a running stack. A paused project counts as 0 MB. This is not live container memory.
+      </p>
       {projects.length === 0 ? (
         <div className="card mt-6 px-6 py-10 text-center">
           <p className="text-lg font-semibold">No projects yet</p>
@@ -49,21 +85,32 @@ export default function ProjectsPage() {
                   </Link>
                   <StatusLamp status={project.status} />
                 </div>
-                <p className="text-muted mt-1 truncate font-mono text-xs">
-                  {describeAddresses({
-                    apiHost: project.apiHost,
-                    studioHost: project.studioHost,
-                    scheme: project.scheme,
-                    customDomain: project.customDomain,
-                    panelHost: project.panelHost,
-                  }).canonicalApiUrl}
+                <p className="text-muted mt-1 font-mono text-xs break-all">
+                  API {project.apiHost}
+                  {project.customDomain ? ` · custom ${project.customDomain}` : ""}
                 </p>
+                <p className="text-muted mt-1 font-mono text-xs break-all">
+                  Studio {project.studioHost}
+                  {project.panelHost ? ` · panel ${project.panelHost}` : ""}
+                </p>
+                <p className="mt-2 text-sm">
+                  {project.loadMb} MB · {project.containers} containers · {pct(project.capacityShare)} of capacity
+                  {room.usedMb > 0 ? ` · ${pct(project.loadShare)} of the load` : ""}
+                </p>
+                <div className="bg-line mt-2 h-1.5 max-w-xs overflow-hidden rounded-full">
+                  <div className="bg-blue h-full rounded-full" style={{ width: `${Math.min(100, Math.round(project.capacityShare * 100))}%` }} />
+                </div>
+                {project.active ? null : (
+                  <p className="text-muted mt-1 text-xs">
+                    This one is not counting. Running, it takes {project.ramMb} MB and {TEMPLATE.containers} containers.
+                  </p>
+                )}
                 <p className="text-muted mt-1 text-xs">{formatWhen(project.createdAt)}</p>
                 {project.status === "starting" ? (
                   <p className="text-warn mt-1 text-xs">Still booting. The first start can take several minutes.</p>
                 ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                 <a href={`/projects/${project.id}/offline`} className="btn btn-ghost">
                   <Download size={16} />
                   Offline copy
@@ -72,6 +119,9 @@ export default function ProjectsPage() {
                   Open
                   <ArrowUpRight size={16} />
                 </Link>
+                {project.status === "deleting" ? null : (
+                  <RemoveProject id={project.id} slug={project.slug} keysLocal={project.keysLocal} />
+                )}
               </div>
             </li>
           ))}

@@ -168,31 +168,30 @@ export function capacitySnapshot() {
   };
 }
 
-function claimedHosts(exceptId?: string): Set<string> {
-  const rows = getDb()
-    .prepare("SELECT id, api_host, studio_host, custom_domain, panel_host FROM projects")
-    .all() as {
-    id: string;
-    api_host: string;
-    studio_host: string;
-    custom_domain: string | null;
-    panel_host: string | null;
-  }[];
-  const hosts = new Set<string>();
-  for (const row of rows) {
-    if (row.id === exceptId) continue;
-    for (const host of [row.api_host, row.studio_host, row.custom_domain, row.panel_host]) {
-      if (host) hosts.add(host);
-    }
-  }
-  return hosts;
+function projectHostList(project: Project): string[] {
+  return [project.apiHost, project.studioHost, project.customDomain, project.panelHost].filter((host): host is string => Boolean(host));
+}
+
+function projectInventory(projects: Project[]): string {
+  const count = `${projects.length} project${projects.length === 1 ? "" : "s"}`;
+  if (!projects.length) return `This panel has ${count}.`;
+  const lines = projects.map((project) => {
+    const hosts = projectHostList(project).join(", ");
+    return `${project.name} (${project.slug}, ${project.status}): ${hosts}`;
+  });
+  return `This panel has ${count}.\n${lines.join("\n")}`;
 }
 
 function assertHostsFree(hosts: string[], exceptId?: string): void {
-  const taken = claimedHosts(exceptId);
-  if (hosts.some((host) => taken.has(host))) {
-    throw new PanelError("That host is already used by another project.");
-  }
+  const wanted = hosts.filter(Boolean);
+  const projects = listProjects();
+  const others = projects.filter((project) => project.id !== exceptId);
+  const taken = new Set(others.flatMap(projectHostList));
+  const hits = wanted.filter((host) => taken.has(host));
+  if (!hits.length) return;
+  const owners = others.filter((project) => projectHostList(project).some((host) => hits.includes(host)));
+  const who = owners.map((project) => `${project.name} (${project.slug})`).join(", ");
+  throw new PanelError(`${hits.join(", ")} is already used by ${who}. ${projectInventory(projects)}`);
 }
 
 export function writeAudit(action: string, project: { id?: string | null; slug: string }, detail: string): void {
@@ -575,19 +574,12 @@ export function restoreProject(input: unknown, slugOverride?: string): Project {
     writeAudit("project.restored", project, `Restored keys for ${slug}`);
     return project;
   }
-  try {
-    assertHostsFree([
-      addresses.apiHost,
-      addresses.studioHost,
-      addresses.customDomain || "",
-      addresses.panelHost || "",
-    ].filter(Boolean));
-  } catch (error) {
-    if (error instanceof PanelError) {
-      throw new PanelError("That host is already used. Choose another slug or delete the project that has it.");
-    }
-    throw error;
-  }
+  assertHostsFree([
+    addresses.apiHost,
+    addresses.studioHost,
+    addresses.customDomain || "",
+    addresses.panelHost || "",
+  ].filter(Boolean));
   const room = capacitySnapshot();
   if (!room.canCreate) {
     throw new PanelError(
@@ -678,7 +670,11 @@ export function requestResume(id: string): Project {
 }
 
 export function requestDelete(id: string): Project {
-  const project = requireProject(id, ["running", "starting", "paused", "failed"], "delete");
+  const project = requireProject(
+    id,
+    ["queued", "provisioning", "starting", "running", "pausing", "paused", "resuming", "failed"],
+    "delete",
+  );
   setStatus(id, "deleting");
   const next = getProject(id)!;
   enqueue(next, "delete");

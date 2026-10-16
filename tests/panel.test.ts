@@ -183,7 +183,11 @@ test("rehearsal create, pause, resume, and delete", async () => {
   assert.equal(archive.env.SERVICE_ROLE_KEY.value, revealed);
   assert.equal(JSON.stringify(projects.listEnvPublic(created.id)).includes(revealed), false);
 
-  assert.throws(() => projects.createProject({ name: "Acme Studio", slug: "acme-studio" }), /already used/);
+  assert.throws(
+    () => projects.createProject({ name: "Acme Studio", slug: "acme-studio" }),
+    (error: Error) =>
+      /already used/.test(error.message) && /1 project/.test(error.message) && /Acme \(acme, running\)/.test(error.message),
+  );
 
   projects.requestPause(created.id);
   await worker.processQueue();

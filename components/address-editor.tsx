@@ -102,7 +102,7 @@ export function AddressEditor({
             : `The API is published at ${apiHost}. Panel is Studio.`}
         </p>
       </div>
-      {error ? <p className="text-danger text-sm">{error}</p> : null}
+      {error ? <p className="text-danger text-sm whitespace-pre-line">{error}</p> : null}
       {projectId ? null : (
         <>
           <input type="hidden" name="scheme" value={choice} />
