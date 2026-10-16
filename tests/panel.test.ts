@@ -123,6 +123,10 @@ test("compose placeholders are all given to Coolify", () => {
   const missing = [...new Set(composePlaceholders(yaml))].filter((key) => !(key in env));
   assert.deepEqual(missing, []);
   assert.match(yaml, /name: supa-acme/);
+  assert.match(yaml, /\$\$child/);
+  assert.match(yaml, /child=\$\$!/);
+  assert.equal(yaml.includes("${SERVICE_ROLE_KEY}"), false);
+  assert.match(yaml, /\$\{SUPABASE_SERVICE_ROLE_KEY\}/);
   assert.equal(yaml.includes("csm-"), false);
   assert.match(renderCompose("acme", "abc"), /name: csm-abc-db/);
   assert.match(yaml, /roles-applied/);

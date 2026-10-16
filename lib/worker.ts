@@ -278,9 +278,11 @@ async function recallOnce(): Promise<void> {
 }
 
 async function watchStarting(): Promise<void> {
-  const starting = listProjects().filter((project) => project.status === "starting");
-  if (!starting.length) return;
   const live = coolifyMode() === "live";
+  const starting = listProjects().filter(
+    (project) => project.status === "starting" || (live && project.status === "failed" && project.coolifyServiceUuid),
+  );
+  if (!starting.length) return;
   const now = Date.now();
   if (live && watch.__csmWatch && now - watch.__csmWatch < 10_000) return;
   if (live) watch.__csmWatch = now;
@@ -297,14 +299,15 @@ async function watchStarting(): Promise<void> {
         updateProjectState(project.id, { status: "running", error: null });
         continue;
       }
-      const started = new Date(project.bootAt || project.updatedAt).getTime();
-      const waitedLong = Number.isFinite(started) && Date.now() - started >= 6 * 60 * 1000;
-      if (waitedLong) {
+      if (ready === "failed") {
+        const started = new Date(project.bootAt || project.updatedAt).getTime();
+        const waitedLong = Number.isFinite(started) && Date.now() - started >= 6 * 60 * 1000;
+        if (!waitedLong) continue;
         const names = exitedContainers(payload);
-        const why = names.length ? `${names.join(", ")} exited. ` : "";
+        const who = names.length ? names.join(", ") : "A container";
         updateProjectState(project.id, {
           status: "failed",
-          error: `${why}Still not up: ${report}. The domain returns 404 until gateway is running. Remove this project and create it again for an empty database.`,
+          error: `${who} exited. ${report}`,
         });
         continue;
       }

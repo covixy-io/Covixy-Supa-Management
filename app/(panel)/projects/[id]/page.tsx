@@ -66,9 +66,8 @@ export default async function ProjectPage({
       </div>
       {project.status === "starting" ? (
         <p className="bg-warn-soft text-warn mt-4 max-w-2xl rounded-xl px-4 py-3 text-sm">
-          Starting. The domain can return 404 until the gateway container is running.
-          {project.error ? ` ${project.error}` : " Coolify is still bringing the containers up."} Coolify&apos;s log
-          page can fail to open its terminal; the container status is shown here.
+          Starting. The domain can return 404 until gateway is running.
+          {project.error ? ` ${project.error}` : " The database can be healthy while the other containers are still starting."}
         </p>
       ) : null}
       {project.status !== "starting" && project.error ? (

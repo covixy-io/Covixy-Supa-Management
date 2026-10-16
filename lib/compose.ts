@@ -52,11 +52,11 @@ echo '${rolesB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-rol
 echo '${jwtB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
 echo '${schemaB64}' | base64 -d > /tmp/99-schema.sql
 docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf -c log_min_messages=fatal &
-child=$!
-while kill -0 "$child" 2>/dev/null; do
+child=$$!
+while kill -0 "$$child" 2>/dev/null; do
   if test -f /tmp/roles-applied; then
-    wait "$child"
-    exit $?
+    wait "$$child"
+    exit $$?
   fi
   if pg_isready -U postgres -h localhost >/dev/null 2>&1 \\
     && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql \\
@@ -66,7 +66,7 @@ while kill -0 "$child" 2>/dev/null; do
   fi
   sleep 2
 done
-wait "$child"`;
+wait "$$child"`;
 }
 
 function gatewayBoot(): string {
@@ -148,7 +148,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
@@ -191,7 +191,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
     environment:
       PGRST_DB_URI: postgres://authenticator:\${POSTGRES_PASSWORD}@\${POSTGRES_HOST}:\${POSTGRES_PORT}/\${POSTGRES_DB}
       PGRST_DB_SCHEMAS: \${PGRST_DB_SCHEMAS}
@@ -213,7 +213,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
     environment:
       PORT: 4000
       DB_HOST: \${POSTGRES_HOST}
@@ -251,7 +251,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
       rest:
         condition: service_started
       imgproxy:
@@ -260,7 +260,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
       - storage:/var/lib/storage
     environment:
       ANON_KEY: \${ANON_KEY}
-      SERVICE_KEY: \${SERVICE_ROLE_KEY}
+      SERVICE_KEY: \${SUPABASE_SERVICE_ROLE_KEY}
       POSTGREST_URL: http://rest:3000
       AUTH_JWT_SECRET: \${JWT_SECRET}
       DATABASE_URL: postgres://supabase_storage_admin:\${POSTGRES_PASSWORD}@\${POSTGRES_HOST}:\${POSTGRES_PORT}/\${POSTGRES_DB}
@@ -288,7 +288,7 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
     environment:
       PG_META_PORT: 8080
       PG_META_DB_HOST: \${POSTGRES_HOST}
@@ -323,9 +323,9 @@ ${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
       SUPABASE_URL: http://gateway:80
       SUPABASE_PUBLIC_URL: \${SUPABASE_PUBLIC_URL}
       SUPABASE_ANON_KEY: \${ANON_KEY}
-      SUPABASE_SERVICE_KEY: \${SERVICE_ROLE_KEY}
+      SUPABASE_SERVICE_KEY: \${SUPABASE_SERVICE_ROLE_KEY}
       SUPABASE_PUBLISHABLE_KEY: \${ANON_KEY}
-      SUPABASE_SECRET_KEY: \${SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: \${SUPABASE_SERVICE_ROLE_KEY}
       AUTH_JWT_SECRET: \${JWT_SECRET}
       SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
 
@@ -395,6 +395,7 @@ export function stackEnv(input: {
     JWT_EXPIRY: plain("3600"),
     ANON_KEY: secret(secrets.anonKey),
     SERVICE_ROLE_KEY: secret(secrets.serviceRoleKey),
+    SUPABASE_SERVICE_ROLE_KEY: secret(secrets.serviceRoleKey),
     SECRET_KEY_BASE: secret(secrets.secretKeyBase),
     PG_META_CRYPTO_KEY: secret(secrets.pgMetaCryptoKey),
     REALTIME_DB_ENC_KEY: secret(secrets.realtimeDbEncKey),

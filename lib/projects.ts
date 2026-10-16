@@ -741,7 +741,40 @@ export function readEnv(projectId: string): Record<string, EnvVar> {
   const row = getDb()
     .prepare("SELECT ciphertext, nonce FROM project_env WHERE project_id = ?")
     .get(projectId) as { ciphertext: string; nonce: string } | undefined;
-  if (row) return decryptJson<Record<string, EnvVar>>(row.ciphertext, row.nonce);
+  if (row) {
+    const saved = decryptJson<Record<string, EnvVar>>(row.ciphertext, row.nonce);
+    const project = getProject(projectId);
+    if (!project) return saved;
+    let secrets: StackSecrets;
+    try {
+      secrets = readSecrets(projectId);
+    } catch {
+      return saved;
+    }
+    const fresh = stackEnv({
+      name: project.name,
+      slug: project.slug,
+      apiUrl: `https://${project.apiHost}`,
+      secrets,
+    });
+    let changed = false;
+    for (const [key, item] of Object.entries(fresh)) {
+      if (!saved[key]) {
+        saved[key] = item;
+        changed = true;
+      }
+    }
+    if (
+      saved.SERVICE_ROLE_KEY?.value &&
+      saved.SUPABASE_SERVICE_ROLE_KEY &&
+      saved.SUPABASE_SERVICE_ROLE_KEY.value !== saved.SERVICE_ROLE_KEY.value
+    ) {
+      saved.SUPABASE_SERVICE_ROLE_KEY = { ...saved.SUPABASE_SERVICE_ROLE_KEY, value: saved.SERVICE_ROLE_KEY.value };
+      changed = true;
+    }
+    if (changed) saveEnv(projectId, saved);
+    return saved;
+  }
   const project = getProject(projectId);
   if (!project) throw new PanelError("Project not found.");
   const env = stackEnv({
@@ -774,6 +807,7 @@ const SECRET_FIELDS: Record<string, keyof StackSecrets> = {
   JWT_SECRET: "jwtSecret",
   ANON_KEY: "anonKey",
   SERVICE_ROLE_KEY: "serviceRoleKey",
+  SUPABASE_SERVICE_ROLE_KEY: "serviceRoleKey",
   POSTGRES_PASSWORD: "postgresPassword",
   DASHBOARD_PASSWORD: "dashboardPassword",
 };
@@ -787,6 +821,12 @@ export function updateEnvValue(projectId: string, key: string, value: string): v
   const env = readEnv(projectId);
   if (!env[key]) throw new PanelError("That variable is not part of this stack.");
   env[key] = { ...env[key], value };
+  if (key === "SERVICE_ROLE_KEY" && env.SUPABASE_SERVICE_ROLE_KEY) {
+    env.SUPABASE_SERVICE_ROLE_KEY = { ...env.SUPABASE_SERVICE_ROLE_KEY, value };
+  }
+  if (key === "SUPABASE_SERVICE_ROLE_KEY" && env.SERVICE_ROLE_KEY) {
+    env.SERVICE_ROLE_KEY = { ...env.SERVICE_ROLE_KEY, value };
+  }
   saveEnv(projectId, env);
   const secretField = SECRET_FIELDS[key];
   if (secretField) {
