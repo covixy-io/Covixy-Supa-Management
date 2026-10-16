@@ -97,6 +97,27 @@ test("hosts stay one label under the zone", () => {
     { name: "gateway", url: "https://api.acme.test,http://api.acme.test" },
     { name: "studio", url: "https://panel.acme.test,http://panel.acme.test" },
   ]);
+  assert.equal(both.forceHttps, false);
+  assert.equal(
+    describeAddresses({
+      apiHost: "acme.covixy.com",
+      studioHost: "acme-studio.covixy.com",
+      scheme: "https",
+      customDomain: null,
+      panelHost: null,
+    }).forceHttps,
+    true,
+  );
+  assert.equal(
+    describeAddresses({
+      apiHost: "acme.covixy.com",
+      studioHost: "acme-studio.covixy.com",
+      scheme: "http",
+      customDomain: null,
+      panelHost: null,
+    }).coolifyUrls[1]?.url,
+    "http://acme-studio.covixy.com",
+  );
   assert.ok(both.redirectUrls.includes("http://api.acme.test"));
   assert.equal(both.apiUrls.includes("https://acme.covixy.com"), false);
   assert.equal(validateApex("covixy.com"), null);

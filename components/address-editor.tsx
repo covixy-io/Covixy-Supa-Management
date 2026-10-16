@@ -97,6 +97,11 @@ export function AddressEditor({
         <UrlLine label="API" urls={preview.apiUrls} />
         <UrlLine label="Panel" urls={preview.panelUrls} />
         <p className="text-muted text-xs">
+          {choice === "http"
+            ? "Only HTTP is published, so https:// returns 404."
+            : choice === "both"
+              ? "HTTP and HTTPS are both served. The proxy does not redirect between them, so Cloudflare does not loop."
+              : "HTTPS is published. HTTP redirects to HTTPS once. In Cloudflare, set SSL to Full."}{" "}
           {preview.customDomain
             ? `The API is published at ${preview.canonicalApiUrl}. Panel is Studio.`
             : `The API is published at ${apiHost}. Panel is Studio.`}

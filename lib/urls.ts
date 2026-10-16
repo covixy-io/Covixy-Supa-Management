@@ -20,6 +20,7 @@ export type AddressSet = AddressInput & {
   panelUrls: string[];
   redirectUrls: string[];
   coolifyUrls: { name: string; url: string }[];
+  forceHttps: boolean;
 };
 
 export function parseScheme(value: string): UrlScheme {
@@ -61,9 +62,14 @@ export function describeAddresses(input: AddressInput): AddressSet {
   const apiUrls = urlsForHost(publicApiHost, input.scheme);
   const panelUrls = urlsForHost(effectivePanelHost, input.scheme);
   const canonicalApiUrl = canonicalUrl(publicApiHost, input.scheme);
+  const published = (host: string) => {
+    if (input.scheme === "http") return `http://${host}`;
+    if (input.scheme === "both") return `https://${host},http://${host}`;
+    return `https://${host}`;
+  };
   const coolifyUrls = [
-    { name: "gateway", url: apiUrls.join(",") },
-    { name: "studio", url: panelUrls.join(",") },
+    { name: "gateway", url: published(publicApiHost) },
+    { name: "studio", url: published(effectivePanelHost) },
   ];
   return {
     ...input,
@@ -75,6 +81,7 @@ export function describeAddresses(input: AddressInput): AddressSet {
     panelUrls,
     redirectUrls: apiUrls.filter((url) => url !== canonicalApiUrl),
     coolifyUrls,
+    forceHttps: input.scheme === "https",
   };
 }
 

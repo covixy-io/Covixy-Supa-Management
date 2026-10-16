@@ -125,8 +125,9 @@ PANEL_ENCRYPTION_KEY=`}</pre>
             />
           </div>
           <p className="text-muted mt-4 max-w-3xl text-sm leading-6">
-            Choose HTTPS, HTTP, or both. HTTPS is the address the API publishes. HTTP only publishes http. Both keeps
-            https as the canonical URL and lists the other scheme, plus the alias host, as extra redirect URLs.
+            Choose HTTPS, HTTP, or both. HTTPS publishes https and redirects HTTP once; set Cloudflare SSL to Full.
+            Both serves HTTP and HTTPS without that redirect, which is what loops behind Cloudflare. HTTP only
+            publishes http, so https:// returns 404.
           </p>
         </section>
 

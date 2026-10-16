@@ -135,12 +135,37 @@ export async function restartOrStart(uuid: string): Promise<void> {
   }
 }
 
-export async function updateServiceUrls(uuid: string, urls: { name: string; url: string }[]): Promise<void> {
+export async function updateServiceUrls(
+  uuid: string,
+  urls: { name: string; url: string }[],
+  forceHttps: boolean,
+): Promise<void> {
   if (coolifyMode() === "rehearsal") return;
   await coolifyFetch(`/services/${uuid}`, {
     method: "PATCH",
     body: JSON.stringify({ urls, force_domain_override: true }),
   });
+  await setForceHttps(uuid, forceHttps);
+}
+
+async function setForceHttps(serviceUuid: string, enabled: boolean): Promise<void> {
+  const payload = await getService(serviceUuid);
+  const applications =
+    payload && typeof payload === "object" ? (payload as { applications?: unknown }).applications : undefined;
+  for (const row of Array.isArray(applications) ? applications : []) {
+    const app = row as { uuid?: unknown; name?: unknown };
+    const name = typeof app.name === "string" ? app.name : "";
+    if (typeof app.uuid !== "string" || !app.uuid) continue;
+    if (name && name !== "gateway" && name !== "studio") continue;
+    try {
+      await coolifyFetch(`/services/${encodeURIComponent(serviceUuid)}/applications/${encodeURIComponent(app.uuid)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_force_https_enabled: enabled }),
+      });
+    } catch {
+      // Older Coolify builds keep the default redirect. The single HTTPS address still avoids the loop.
+    }
+  }
 }
 
 export async function persistInstallEnv(env: Record<string, EnvVar>): Promise<void> {

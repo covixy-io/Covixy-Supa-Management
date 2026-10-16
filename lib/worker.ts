@@ -102,7 +102,7 @@ async function provision(job: Job): Promise<void> {
   }
 
   log(job, secretValues, "setting domains");
-  await updateServiceUrls(uuid, addresses.coolifyUrls);
+  await updateServiceUrls(uuid, addresses.coolifyUrls, addresses.forceHttps);
   if (project.keysLocal) {
     log(job, secretValues, "writing environment");
     await setServiceEnv(uuid, env);
@@ -159,7 +159,7 @@ async function syncEnv(job: Job): Promise<void> {
   if (!project.keysLocal) {
     if (!project.coolifyServiceUuid) return;
     log(job, [], "updating addresses without replacing the keys stored on Coolify");
-    await updateServiceUrls(project.coolifyServiceUuid, addresses.coolifyUrls);
+    await updateServiceUrls(project.coolifyServiceUuid, addresses.coolifyUrls, addresses.forceHttps);
     await setServiceEnv(project.coolifyServiceUuid, applyAddressEnv({}, addresses));
     if (project.status === "running" || project.status === "starting") {
       log(job, [], "restarting so the new addresses apply");
@@ -177,7 +177,7 @@ async function syncEnv(job: Job): Promise<void> {
     return;
   }
   log(job, values, "updating Coolify environment");
-  await updateServiceUrls(project.coolifyServiceUuid, addresses.coolifyUrls);
+  await updateServiceUrls(project.coolifyServiceUuid, addresses.coolifyUrls, addresses.forceHttps);
   await setServiceEnv(project.coolifyServiceUuid, env);
   if (project.status === "running" || project.status === "starting") {
     log(job, values, "restarting so the new values apply");
