@@ -18,6 +18,10 @@ function token(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
+export function realtimeEncKey(): string {
+  return randomBytes(8).toString("hex");
+}
+
 export function signJwt(payload: Record<string, unknown>, secret: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -50,7 +54,7 @@ export function generateStackSecrets(): StackSecrets {
     postgresPassword: token(24),
     secretKeyBase: token(64),
     pgMetaCryptoKey: token(32),
-    realtimeDbEncKey: token(32),
+    realtimeDbEncKey: realtimeEncKey(),
     dashboardUsername: "supabase",
     dashboardPassword: token(24),
     s3ProtocolAccessKeyId: token(16),

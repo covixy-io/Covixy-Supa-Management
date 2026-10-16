@@ -40,7 +40,7 @@ import {
 import { panelApex } from "@/lib/settings";
 import { scrubSecrets } from "@/lib/secrets";
 import type { Job } from "@/lib/template";
-import { describeAddresses } from "@/lib/urls";
+import { applyAddressEnv, describeAddresses } from "@/lib/urls";
 
 const gate = globalThis as unknown as {
   __csmBusy?: boolean;
@@ -108,6 +108,11 @@ async function provision(job: Job): Promise<void> {
     await setServiceEnv(uuid, env);
   } else if (existing) {
     log(job, secretValues, "keeping the keys already stored on this Coolify service");
+    const realtimeKey = readEnv(project.id).REALTIME_DB_ENC_KEY;
+    if (realtimeKey) {
+      log(job, secretValues, "setting a 16-byte realtime encryption key without replacing the other keys");
+      await setServiceEnv(project.coolifyServiceUuid || uuid, { REALTIME_DB_ENC_KEY: realtimeKey });
+    }
   } else {
     throw new Error("This panel does not hold the original keys, so it will not create a new service.");
   }
@@ -144,8 +149,26 @@ async function resume(job: Job): Promise<void> {
 async function syncEnv(job: Job): Promise<void> {
   const project = getProject(job.projectId || "");
   if (!project) throw new Error("Project disappeared before the env sync.");
+  const addresses = describeAddresses({
+    apiHost: project.apiHost,
+    studioHost: project.studioHost,
+    scheme: project.scheme,
+    customDomain: project.customDomain,
+    panelHost: project.panelHost,
+  });
   if (!project.keysLocal) {
-    throw new Error("Restore the offline file before changing keys or addresses.");
+    if (!project.coolifyServiceUuid) return;
+    log(job, [], "updating addresses without replacing the keys stored on Coolify");
+    await updateServiceUrls(project.coolifyServiceUuid, addresses.coolifyUrls);
+    await setServiceEnv(project.coolifyServiceUuid, applyAddressEnv({}, addresses));
+    if (project.status === "running" || project.status === "starting") {
+      log(job, [], "restarting so the new addresses apply");
+      await restartService(project.coolifyServiceUuid);
+      if (coolifyMode() === "live") updateProjectState(project.id, { status: "starting", error: null });
+    }
+    updateProjectState(project.id, { error: null });
+    writeAudit("env.synced", project, project.coolifyServiceUuid);
+    return;
   }
   const env = readEnv(project.id);
   const values = Object.values(env).map((item) => item.value);
@@ -154,16 +177,7 @@ async function syncEnv(job: Job): Promise<void> {
     return;
   }
   log(job, values, "updating Coolify environment");
-  await updateServiceUrls(
-    project.coolifyServiceUuid,
-    describeAddresses({
-      apiHost: project.apiHost,
-      studioHost: project.studioHost,
-      scheme: project.scheme,
-      customDomain: project.customDomain,
-      panelHost: project.panelHost,
-    }).coolifyUrls,
-  );
+  await updateServiceUrls(project.coolifyServiceUuid, addresses.coolifyUrls);
   await setServiceEnv(project.coolifyServiceUuid, env);
   if (project.status === "running" || project.status === "starting") {
     log(job, values, "restarting so the new values apply");

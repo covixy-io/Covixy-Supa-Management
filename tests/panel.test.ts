@@ -24,6 +24,7 @@ test("keys are signed for anon and service_role and expire after 2030", () => {
     assert.ok(Number(payload.exp) > Date.parse("2030-01-01") / 1000);
   }
   assert.ok(secrets.postgresPassword.length >= 24);
+  assert.equal(secrets.realtimeDbEncKey.length, 16);
   assert.equal(secrets.dashboardUsername, "supabase");
 });
 
@@ -399,6 +400,12 @@ test("a replaced panel database keeps setup and the Coolify service", async () =
   projects.requestProvision(recovered!.id);
   assert.equal(projects.getProject(recovered!.id)?.status, "queued");
   assert.throws(() => projects.exportProjectArchive(recovered!.id), /offline file/);
+  projects.updateProjectAddresses(recovered!.id, {
+    scheme: "http",
+    customDomain: "demo.carsgames.org",
+    panelHost: "demo-studio.carsgames.org",
+  });
+  assert.equal(projects.getProject(recovered!.id)?.scheme, "http");
 
   const secrets = generateStackSecrets();
   const restored = projects.restoreProject({

@@ -8,7 +8,7 @@ import { capacity } from "@/lib/capacity";
 import { reserveFromSpecs, type StoredServerSpecs } from "@/lib/server-specs";
 import { readStoredSpecs } from "@/lib/specs-sync";
 import { stackEnv, type EnvVar } from "@/lib/compose";
-import { generateStackSecrets, type StackSecrets } from "@/lib/secrets";
+import { generateStackSecrets, realtimeEncKey, type StackSecrets } from "@/lib/secrets";
 import { configuredNumber, getSetting, panelApex, serverName } from "@/lib/settings";
 import { RAM_STATUSES, TEMPLATE, type AuditEntry, type Job, type JobType, type Project, type ProjectStatus } from "@/lib/template";
 
@@ -142,7 +142,7 @@ export function getProjectBySlug(slug: string): Project | null {
 function assertKeysLocal(project: Project): void {
   if (!project.keysLocal) {
     throw new PanelError(
-      "Restore the offline file before changing keys or addresses. This panel does not hold the original keys, and saving now would replace them on the running stack.",
+      "Restore the offline file before changing keys. This panel does not hold the original keys, and saving them would replace the keys on the running stack.",
     );
   }
 }
@@ -349,7 +349,6 @@ export function updateProjectAddresses(
 ): void {
   const project = getProject(projectId);
   if (!project) throw new PanelError("Project not found.");
-  assertKeysLocal(project);
   const apex = panelApex();
   const resolved = resolveAddressInput({
     slug: project.slug,
@@ -770,6 +769,19 @@ export function readEnv(projectId: string): Record<string, EnvVar> {
       saved.SUPABASE_SERVICE_ROLE_KEY.value !== saved.SERVICE_ROLE_KEY.value
     ) {
       saved.SUPABASE_SERVICE_ROLE_KEY = { ...saved.SUPABASE_SERVICE_ROLE_KEY, value: saved.SERVICE_ROLE_KEY.value };
+      changed = true;
+    }
+    if (saved.REALTIME_DB_ENC_KEY && saved.REALTIME_DB_ENC_KEY.value.length !== 16) {
+      const value = realtimeEncKey();
+      saved.REALTIME_DB_ENC_KEY = { ...saved.REALTIME_DB_ENC_KEY, value };
+      try {
+        const packed = encryptJson({ ...secrets, realtimeDbEncKey: value });
+        getDb()
+          .prepare("UPDATE secrets SET ciphertext = ?, nonce = ?, updated_at = ? WHERE project_id = ?")
+          .run(packed.ciphertext, packed.nonce, now(), projectId);
+      } catch {
+        // A recovered project can correct the compose value without a readable secret copy.
+      }
       changed = true;
     }
     if (changed) saveEnv(projectId, saved);
