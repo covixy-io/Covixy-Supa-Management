@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { CoolifyCheck } from "@/components/coolify-check";
 import { CoolifySettings } from "@/components/coolify-settings";
 import { PageHeader } from "@/components/page-header";
 import { passwordEnabled } from "@/lib/auth";
-import { encryptionKeySource } from "@/lib/crypto";
+import { encryptionKeyDiffersFromEnv, encryptionKeySource } from "@/lib/crypto";
+import { dbFilePath } from "@/lib/db";
 import { coolifyMode } from "@/lib/coolify";
 import { refreshSpecsAction } from "@/app/actions";
 import { serverReserveMb, serverSpecs } from "@/lib/projects";
@@ -68,6 +70,22 @@ export default function SettingsPage() {
           </dd>
         </div>
       </dl>
+      <div className="bg-warn-soft text-warn mt-4 rounded-xl px-4 py-3 text-sm">
+        <p>
+          Redeploying this panel does not stop Supabase stacks. Each stack is its own Coolify service and keeps running,
+          with its keys still stored on that service.
+        </p>
+        <p className="mt-2">
+          This panel’s copy of those keys is the database at <span className="font-mono">{dbFilePath()}</span>
+          {existsSync(dbFilePath()) ? "" : " (not created yet)"}. That folder has to be a persistent volume mounted at{" "}
+          <span className="font-mono">/app/data</span>. A redeploy without that volume starts from an empty database, so
+          the keys look gone. The encryption key is saved in that same folder and is kept even if Coolify generates a
+          new <span className="font-mono">PANEL_ENCRYPTION_KEY</span>.
+          {encryptionKeyDiffersFromEnv()
+            ? " The environment key does not match the saved key. This panel keeps the saved key so existing projects stay readable."
+            : ""}
+        </p>
+      </div>
       <form action={refreshSpecsAction} className="mt-3">
         <button type="submit" className="btn btn-ghost">
           Refresh server specs

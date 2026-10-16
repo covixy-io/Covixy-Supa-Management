@@ -1,4 +1,4 @@
-const busy = new Set(["queued", "provisioning", "pausing", "resuming", "deleting"]);
+const busy = new Set(["queued", "provisioning", "starting", "pausing", "resuming", "deleting"]);
 
 export function isBusy(status: string): boolean {
   return busy.has(status);

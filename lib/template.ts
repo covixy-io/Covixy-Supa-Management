@@ -12,7 +12,7 @@ export const TEMPLATE = {
     "Pins the images from the official self-hosted compose as of 2026-10-16. Postgres 17 is the current image, and the major version is stored on each project. Edge functions, the pooler, and analytics are left out so a stack stays near the 1–2 GB estimate. Studio is on its own hostname and is not behind Cloudflare Access yet.",
 } as const;
 
-export const RAM_STATUSES = ["queued", "provisioning", "running", "pausing", "resuming", "deleting"] as const;
+export const RAM_STATUSES = ["queued", "provisioning", "starting", "running", "pausing", "resuming", "deleting"] as const;
 
 export type ProjectStatus =
   | (typeof RAM_STATUSES)[number]

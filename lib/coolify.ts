@@ -148,6 +148,28 @@ export async function deleteService(uuid: string): Promise<void> {
   await coolifyFetch(`/services/${uuid}?${query}`, { method: "DELETE" });
 }
 
+export function serviceReadiness(payload: unknown): "starting" | "running" {
+  const body = payload && typeof payload === "object" ? (payload as { status?: unknown; applications?: unknown; databases?: unknown }) : {};
+  const children = [...asRows(body.applications), ...asRows(body.databases)];
+  const statuses = (children.length ? children : [{ status: body.status }])
+    .map((row) => String(row.status || "").toLowerCase())
+    .filter(Boolean);
+  if (!statuses.length) return "starting";
+  const pending = (status: string) =>
+    ["unknown", "starting", "restart", "created", "pull", "removing"].some((word) => status.includes(word));
+  const down = (status: string) => ["unhealthy", "exited", "dead"].some((word) => status.includes(word));
+  const up = statuses.every((status) => !pending(status) && !down(status) && (status.includes("running") || status.includes("healthy")));
+  return up ? "running" : "starting";
+}
+
+function asRows(value: unknown): { status?: unknown }[] {
+  return Array.isArray(value) ? (value as { status?: unknown }[]) : [];
+}
+
+export async function getService(uuid: string): Promise<unknown> {
+  return coolifyFetch(`/services/${encodeURIComponent(uuid)}`);
+}
+
 export async function fetchConfiguredServer(): Promise<unknown | null> {
   if (coolifyMode() !== "live") return null;
   const uuid = coolifyConfig().server;

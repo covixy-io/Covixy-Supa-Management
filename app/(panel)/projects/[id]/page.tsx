@@ -64,6 +64,12 @@ export default async function ProjectPage({
           It does not include database rows.
         </p>
       </div>
+      {project.status === "starting" ? (
+        <p className="bg-warn-soft text-warn mt-4 max-w-2xl rounded-xl px-4 py-3 text-sm">
+          Starting. Coolify is downloading images and booting containers. This stays on Starting until those containers
+          are up, which often takes several minutes the first time.
+        </p>
+      ) : null}
       {project.error ? <p className="text-danger mt-4 max-w-2xl text-sm">{project.error}</p> : null}
       {query.error ? <p className="text-danger mt-4 max-w-2xl text-sm">{query.error}</p> : null}
 

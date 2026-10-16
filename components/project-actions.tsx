@@ -29,7 +29,7 @@ export function ProjectActions({
   const showPause = status === "running" || (status === "failed" && lastJob === "pause");
   const showResume = status === "paused" || (status === "failed" && lastJob === "resume");
   const showProvision = status === "failed" && (lastJob === "provision" || lastJob === null);
-  const showDelete = status === "running" || status === "paused" || status === "failed";
+  const showDelete = status === "running" || status === "starting" || status === "paused" || status === "failed";
 
   return (
     <div className="space-y-4">

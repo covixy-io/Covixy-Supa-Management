@@ -59,6 +59,9 @@ export default function ProjectsPage() {
                   }).canonicalApiUrl}
                 </p>
                 <p className="text-muted mt-1 text-xs">{formatWhen(project.createdAt)}</p>
+                {project.status === "starting" ? (
+                  <p className="text-warn mt-1 text-xs">Still booting. The first start can take several minutes.</p>
+                ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 <a href={`/projects/${project.id}/offline`} className="btn btn-ghost">

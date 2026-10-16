@@ -3,7 +3,9 @@ import { composePlaceholders, renderCompose } from "@/lib/compose";
 import {
   createService,
   deleteService,
+  getService,
   restartService,
+  serviceReadiness,
   setServiceEnv,
   startService,
   stopService,
@@ -15,6 +17,7 @@ import {
   claimJob,
   finishJob,
   getProject,
+  listProjects,
   readEnv,
   readSecrets,
   removeProject,
@@ -79,9 +82,9 @@ async function provision(job: Job): Promise<void> {
   await setServiceEnv(uuid, env);
   log(job, secretValues, "starting service");
   await startService(uuid);
-  updateProjectState(project.id, { status: "running", error: null });
+  updateProjectState(project.id, { status: "starting", error: null });
   writeAudit("project.provisioned", project, `${coolifyMode()} ${uuid}`);
-  log(job, secretValues, "Coolify accepted the start. The first image pull can take several minutes.");
+  log(job, secretValues, "Coolify queued the start. Images can take several minutes to download.");
 }
 
 async function pause(job: Job): Promise<void> {
@@ -102,7 +105,7 @@ async function resume(job: Job): Promise<void> {
   const secrets = safeSecretValues(project.id);
   log(job, secrets, `starting ${project.coolifyServiceUuid}`);
   await startService(project.coolifyServiceUuid);
-  updateProjectState(project.id, { status: "running", error: null });
+  updateProjectState(project.id, { status: "starting", error: null });
   writeAudit("project.resumed", project, project.coolifyServiceUuid);
 }
 
@@ -127,9 +130,10 @@ async function syncEnv(job: Job): Promise<void> {
     }).coolifyUrls,
   );
   await setServiceEnv(project.coolifyServiceUuid, env);
-  if (project.status === "running") {
+  if (project.status === "running" || project.status === "starting") {
     log(job, values, "restarting so the new values apply");
     await restartService(project.coolifyServiceUuid);
+    if (coolifyMode() === "live") updateProjectState(project.id, { status: "starting", error: null });
   }
   updateProjectState(project.id, { error: null });
   writeAudit("env.synced", project, project.coolifyServiceUuid);
@@ -185,6 +189,29 @@ async function run(job: Job): Promise<void> {
   }
 }
 
+const watch = globalThis as unknown as { __csmWatch?: number };
+
+async function watchStarting(): Promise<void> {
+  const starting = listProjects().filter((project) => project.status === "starting");
+  if (!starting.length) return;
+  const live = coolifyMode() === "live";
+  const now = Date.now();
+  if (live && watch.__csmWatch && now - watch.__csmWatch < 10_000) return;
+  if (live) watch.__csmWatch = now;
+  for (const project of starting) {
+    if (coolifyMode() !== "live" || !project.coolifyServiceUuid || project.coolifyServiceUuid.startsWith("rehearsal-")) {
+      updateProjectState(project.id, { status: "running", error: null });
+      continue;
+    }
+    try {
+      const ready = serviceReadiness(await getService(project.coolifyServiceUuid));
+      if (ready === "running") updateProjectState(project.id, { status: "running", error: null });
+    } catch {
+      // A status check can fail while Coolify is still pulling images.
+    }
+  }
+}
+
 export async function processQueue(): Promise<void> {
   if (gate.__csmBusy) return;
   gate.__csmBusy = true;
@@ -192,9 +219,10 @@ export async function processQueue(): Promise<void> {
     recordSampleIfDue();
     for (;;) {
       const job = claimJob();
-      if (!job) return;
+      if (!job) break;
       await run(job);
     }
+    await watchStarting();
   } finally {
     gate.__csmBusy = false;
   }

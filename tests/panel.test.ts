@@ -7,6 +7,7 @@ import { capacity } from "../lib/capacity.ts";
 import { reserveFromSpecs, specsFromCoolify } from "../lib/server-specs.ts";
 import { composePlaceholders, renderCompose, stackEnv } from "../lib/compose.ts";
 import { hostsFor, singleLabelHosts, validateApex, validateSlug } from "../lib/hosts.ts";
+import { serviceReadiness } from "../lib/coolify.ts";
 import { describeAddresses } from "../lib/urls.ts";
 import { decodeJwtPayload, generateStackSecrets, scrubSecrets, signJwt } from "../lib/secrets.ts";
 
@@ -44,6 +45,20 @@ test("hosts stay one label under the zone", () => {
   });
   assert.equal(both.canonicalApiUrl, "https://api.acme.test");
   assert.equal(both.canonicalPanelUrl, "https://panel.acme.test");
+  assert.equal(
+    serviceReadiness({
+      applications: [{ status: "running:unknown" }, { status: "running:healthy" }],
+    }),
+    "starting",
+  );
+  assert.equal(
+    serviceReadiness({
+      applications: [{ status: "running:healthy" }],
+      databases: [{ status: "running:healthy" }],
+    }),
+    "running",
+  );
+  assert.equal(serviceReadiness({ status: "exited" }), "starting");
   assert.deepEqual(both.coolifyUrls, [
     {
       name: "gateway",
@@ -230,4 +245,19 @@ test("settings save the full Coolify token", async () => {
     /COOLIFY_API_TOKEN/,
   );
   delete process.env.COOLIFY_API_TOKEN;
+});
+
+test("a replaced environment key does not make saved secrets unreadable", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "csm-key-"));
+  process.env.PANEL_DB_PATH = path.join(dir, "panel.db");
+  process.env.PANEL_ENCRYPTION_KEY = Buffer.alloc(32, 3).toString("base64");
+  const crypto = await import("../lib/crypto.ts");
+  crypto.resetEncryptionKeyForTests();
+  const packed = crypto.encryptJson("panel-secret");
+  process.env.PANEL_ENCRYPTION_KEY = Buffer.alloc(32, 4).toString("base64");
+  crypto.resetEncryptionKeyForTests();
+  assert.equal(crypto.decryptJson(packed.ciphertext, packed.nonce), "panel-secret");
+  assert.equal(crypto.encryptionKeyDiffersFromEnv(), true);
+  delete process.env.PANEL_ENCRYPTION_KEY;
+  crypto.resetEncryptionKeyForTests();
 });

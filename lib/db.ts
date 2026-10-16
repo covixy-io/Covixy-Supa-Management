@@ -8,6 +8,11 @@ export function dbFilePath(): string {
   return process.env.PANEL_DB_PATH || path.join(process.cwd(), "data", "panel.db");
 }
 
+export function panelDataDir(): string {
+  const file = dbFilePath();
+  return file === ":memory:" ? path.join(process.cwd(), "data") : path.dirname(file);
+}
+
 function migrate(database: DatabaseSync): void {
   database.exec(`
     PRAGMA journal_mode = WAL;

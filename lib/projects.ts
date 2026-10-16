@@ -349,7 +349,7 @@ export function updateProjectAddresses(
   saveEnv(project.id, applyAddressEnv(readEnv(project.id), addresses));
   writeAudit("project.addresses", project, addresses.canonicalApiUrl);
   const current = getProject(project.id);
-  if (current?.coolifyServiceUuid && ["running", "paused", "failed"].includes(current.status)) {
+  if (current?.coolifyServiceUuid && ["running", "starting", "paused", "failed"].includes(current.status)) {
     enqueue(current, "sync-env");
   }
 }
@@ -494,7 +494,7 @@ export function requestResume(id: string): Project {
 }
 
 export function requestDelete(id: string): Project {
-  const project = requireProject(id, ["running", "paused", "failed"], "delete");
+  const project = requireProject(id, ["running", "starting", "paused", "failed"], "delete");
   setStatus(id, "deleting");
   const next = getProject(id)!;
   enqueue(next, "delete");
@@ -609,7 +609,7 @@ export function updateEnvValue(projectId: string, key: string, value: string): v
       .run(packed.ciphertext, packed.nonce, now(), projectId);
   }
   writeAudit("env.updated", project, key);
-  if (project.coolifyServiceUuid && ["running", "paused", "failed"].includes(project.status)) {
+  if (project.coolifyServiceUuid && ["running", "starting", "paused", "failed"].includes(project.status)) {
     enqueue(project, "sync-env");
   }
 }
