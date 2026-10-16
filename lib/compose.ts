@@ -18,6 +18,26 @@ const JWT_SQL = [
   "",
 ].join("\n");
 
+const SCHEMA_SQL = `
+DO $$
+BEGIN
+  IF to_regclass('auth.users') IS NOT NULL THEN
+    ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS banned_until timestamptz;
+    ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+    ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS is_sso_user boolean NOT NULL DEFAULT false;
+    ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS is_anonymous boolean NOT NULL DEFAULT false;
+    GRANT USAGE ON SCHEMA auth TO supabase_auth_admin;
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA auth TO supabase_auth_admin;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA auth TO supabase_auth_admin;
+  END IF;
+  IF to_regclass('storage.buckets') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA storage TO supabase_storage_admin;
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA storage TO supabase_storage_admin;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA storage TO supabase_storage_admin;
+  END IF;
+END $$;
+`.trim();
+
 function indent(text: string, spaces: number): string {
   const pad = " ".repeat(spaces);
   return text
@@ -26,15 +46,28 @@ function indent(text: string, spaces: number): string {
     .join("\n");
 }
 
-function dbBoot(rolesB64: string, jwtB64: string): string {
+function dbBoot(rolesB64: string, jwtB64: string, schemaB64: string): string {
   return `mkdir -p /docker-entrypoint-initdb.d/init-scripts
 echo '${rolesB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
 echo '${jwtB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
+echo '${schemaB64}' | base64 -d > /tmp/99-schema.sql
 docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf -c log_min_messages=fatal &
 child=$!
-until pg_isready -U postgres -h localhost; do sleep 1; done
-psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql || exit 1
-psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql || exit 1
+ready=0
+n=0
+while [ "$n" -lt 90 ]; do
+  n=$((n + 1))
+  if pg_isready -U postgres -h localhost >/dev/null 2>&1; then
+    if psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql \\
+      && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql \\
+      && psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/99-schema.sql; then
+      ready=1
+      break
+    fi
+  fi
+  sleep 2
+done
+if [ "$ready" != 1 ]; then exit 1; fi
 touch /tmp/roles-applied
 wait "$child"`;
 }
@@ -78,6 +111,7 @@ exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile`;
 export function renderCompose(slug: string): string {
   const rolesB64 = Buffer.from(ROLES_SQL, "utf8").toString("base64");
   const jwtB64 = Buffer.from(JWT_SQL, "utf8").toString("base64");
+  const schemaB64 = Buffer.from(SCHEMA_SQL, "utf8").toString("base64");
 
   return `# ${TEMPLATE.id} ${TEMPLATE.version}
 # Postgres ${TEMPLATE.postgresMajor}. Image tags pinned from supabase/supabase on 2026-10-16.
@@ -93,7 +127,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-${indent(dbBoot(rolesB64, jwtB64), 8)}
+${indent(dbBoot(rolesB64, jwtB64, schemaB64), 8)}
     environment:
       POSTGRES_HOST: /var/run/postgresql
       PGPORT: \${POSTGRES_PORT}
@@ -109,8 +143,8 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       test: ["CMD-SHELL", "test -f /tmp/roles-applied && pg_isready -U postgres -h localhost"]
       interval: 5s
       timeout: 5s
-      retries: 30
-      start_period: 20s
+      retries: 40
+      start_period: 180s
 
   auth:
     image: supabase/gotrue:v2.197.0
@@ -293,6 +327,8 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       SUPABASE_PUBLIC_URL: \${SUPABASE_PUBLIC_URL}
       SUPABASE_ANON_KEY: \${ANON_KEY}
       SUPABASE_SERVICE_KEY: \${SERVICE_ROLE_KEY}
+      SUPABASE_PUBLISHABLE_KEY: \${ANON_KEY}
+      SUPABASE_SECRET_KEY: \${SERVICE_ROLE_KEY}
       AUTH_JWT_SECRET: \${JWT_SECRET}
       SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
 

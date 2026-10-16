@@ -4,6 +4,9 @@ import {
   createService,
   deleteService,
   getService,
+  hostsFromCoolifyService,
+  listServices,
+  readServiceEnvValues,
   restartOrStart,
   restartService,
   serviceReadiness,
@@ -14,18 +17,22 @@ import {
   updateServiceUrls,
   coolifyMode,
 } from "@/lib/coolify";
+import { validateSlug } from "@/lib/hosts";
 import {
   appendJobLog,
   claimJob,
   finishJob,
   getProject,
+  getProjectBySlug,
   listProjects,
   readEnv,
   readSecrets,
+  rememberRunningService,
   removeProject,
   updateProjectState,
   writeAudit,
 } from "@/lib/projects";
+import { panelApex } from "@/lib/settings";
 import { scrubSecrets } from "@/lib/secrets";
 import type { Job } from "@/lib/template";
 import { describeAddresses } from "@/lib/urls";
@@ -82,8 +89,14 @@ async function provision(job: Job): Promise<void> {
 
   log(job, secretValues, "setting domains");
   await updateServiceUrls(uuid, addresses.coolifyUrls);
-  log(job, secretValues, "writing environment");
-  await setServiceEnv(uuid, env);
+  if (project.keysLocal) {
+    log(job, secretValues, "writing environment");
+    await setServiceEnv(uuid, env);
+  } else if (existing) {
+    log(job, secretValues, "keeping the keys already stored on this Coolify service");
+  } else {
+    throw new Error("This panel does not hold the original keys, so it will not create a new service.");
+  }
   log(job, secretValues, existing ? "restarting service" : "starting service");
   if (existing) await restartOrStart(uuid);
   else await startService(uuid);
@@ -117,6 +130,9 @@ async function resume(job: Job): Promise<void> {
 async function syncEnv(job: Job): Promise<void> {
   const project = getProject(job.projectId || "");
   if (!project) throw new Error("Project disappeared before the env sync.");
+  if (!project.keysLocal) {
+    throw new Error("Restore the offline file before changing keys or addresses.");
+  }
   const env = readEnv(project.id);
   const values = Object.values(env).map((item) => item.value);
   if (!project.coolifyServiceUuid) {
@@ -151,9 +167,11 @@ async function remove(job: Job): Promise<void> {
     return;
   }
   const secrets = safeSecretValues(project.id);
-  if (project.coolifyServiceUuid) {
+  if (project.coolifyServiceUuid && project.keysLocal) {
     log(job, secrets, `deleting ${project.coolifyServiceUuid} and its volumes`);
     await deleteService(project.coolifyServiceUuid);
+  } else if (project.coolifyServiceUuid) {
+    log(job, secrets, "keeping the Coolify service and its database; removing only the panel row");
   } else {
     log(job, secrets, "no Coolify service; removing the panel record");
   }
@@ -194,7 +212,49 @@ async function run(job: Job): Promise<void> {
   }
 }
 
-const watch = globalThis as unknown as { __csmWatch?: number };
+const watch = globalThis as unknown as { __csmWatch?: number; __csmRecallAt?: number };
+
+async function recallServices(): Promise<void> {
+  const services = await listServices();
+  for (const service of services) {
+    const slug = service.name.startsWith("supa-") ? service.name.slice("supa-".length) : "";
+    if (!slug || validateSlug(slug)) continue;
+    if (getProjectBySlug(slug)?.coolifyServiceUuid) continue;
+    let envValues: Record<string, string> = {};
+    try {
+      envValues = await readServiceEnvValues(service.uuid);
+    } catch {
+      envValues = {};
+    }
+    let detail: unknown = null;
+    try {
+      detail = await getService(service.uuid);
+    } catch {
+      detail = null;
+    }
+    const hosts = hostsFromCoolifyService(detail, slug, panelApex());
+    rememberRunningService({
+      slug,
+      uuid: service.uuid,
+      apiHost: hosts.apiHost,
+      studioHost: hosts.studioHost,
+      envValues,
+    });
+  }
+}
+
+async function recallOnce(): Promise<void> {
+  if (coolifyMode() !== "live") return;
+  const now = Date.now();
+  if (watch.__csmRecallAt && now < watch.__csmRecallAt) return;
+  watch.__csmRecallAt = now + 60_000;
+  try {
+    await recallServices();
+    watch.__csmRecallAt = now + 10 * 60_000;
+  } catch (error) {
+    console.error(error);
+  }
+}
 
 async function watchStarting(): Promise<void> {
   const starting = listProjects().filter((project) => project.status === "starting");
@@ -211,6 +271,12 @@ async function watchStarting(): Promise<void> {
     try {
       const ready = serviceReadiness(await getService(project.coolifyServiceUuid));
       if (ready === "running") updateProjectState(project.id, { status: "running", error: null });
+      else if (ready === "failed") {
+        updateProjectState(project.id, {
+          status: "failed",
+          error: "A container exited while starting. Open the service in Coolify and read the db and auth logs.",
+        });
+      }
     } catch {
       // A status check can fail while Coolify is still pulling images.
     }
@@ -227,6 +293,7 @@ export async function processQueue(): Promise<void> {
       if (!job) break;
       await run(job);
     }
+    await recallOnce();
     await watchStarting();
   } finally {
     gate.__csmBusy = false;

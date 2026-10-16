@@ -58,7 +58,7 @@ export function canonicalUrl(host: string, scheme: UrlScheme): string {
 export function describeAddresses(input: AddressInput): AddressSet {
   const publicApiHost = input.customDomain || input.apiHost;
   const effectivePanelHost = input.panelHost || input.studioHost;
-  const apiUrls = [...new Set([...urlsForHost(publicApiHost, input.scheme), ...urlsForHost(input.apiHost, input.scheme)])];
+  const apiUrls = urlsForHost(publicApiHost, input.scheme);
   const panelUrls = urlsForHost(effectivePanelHost, input.scheme);
   const canonicalApiUrl = canonicalUrl(publicApiHost, input.scheme);
   const coolifyUrls = [

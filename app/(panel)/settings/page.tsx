@@ -72,8 +72,9 @@ export default function SettingsPage() {
       </dl>
       <div className="bg-warn-soft text-warn mt-4 rounded-xl px-4 py-3 text-sm">
         <p>
-          Redeploying this panel does not stop Supabase stacks. Each stack is its own Coolify service and keeps running,
-          with its keys still stored on that service.
+          Restart, Redeploy, and Deploy keep the Coolify environment variables, so this panel stays set up when the apex
+          and Coolify connection are already in that environment. Each Supabase stack is its own Coolify service named
+          supa- and keeps running, including its database. This panel attaches those services again after a fresh container.
         </p>
         <p className="mt-2">
           This panel’s copy of those keys is the database at <span className="font-mono">{dbFilePath()}</span>

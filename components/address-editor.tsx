@@ -97,7 +97,9 @@ export function AddressEditor({
         <UrlLine label="API" urls={preview.apiUrls} />
         <UrlLine label="Panel" urls={preview.panelUrls} />
         <p className="text-muted text-xs">
-          Default host stays {apiHost}. A custom domain becomes the address the API publishes. Panel is Studio.
+          {preview.customDomain
+            ? `The API is published at ${preview.canonicalApiUrl}. Panel is Studio.`
+            : `The API is published at ${apiHost}. Panel is Studio.`}
         </p>
       </div>
       {error ? <p className="text-danger text-sm">{error}</p> : null}

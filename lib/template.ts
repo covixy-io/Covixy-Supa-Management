@@ -36,6 +36,7 @@ export type Project = {
   templateVersion: string;
   postgresMajor: number;
   coolifyServiceUuid: string | null;
+  keysLocal: boolean;
   ramMb: number;
   error: string | null;
   createdAt: string;

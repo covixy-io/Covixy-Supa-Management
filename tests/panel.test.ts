@@ -7,7 +7,7 @@ import { capacity } from "../lib/capacity.ts";
 import { reserveFromSpecs, specsFromCoolify } from "../lib/server-specs.ts";
 import { composePlaceholders, renderCompose, stackEnv } from "../lib/compose.ts";
 import { hostsFor, singleLabelHosts, validateApex, validateSlug } from "../lib/hosts.ts";
-import { serviceReadiness } from "../lib/coolify.ts";
+import { hostsFromCoolifyService, serviceReadiness } from "../lib/coolify.ts";
 import { describeAddresses } from "../lib/urls.ts";
 import { decodeJwtPayload, generateStackSecrets, scrubSecrets, signJwt } from "../lib/secrets.ts";
 
@@ -49,8 +49,9 @@ test("hosts stay one label under the zone", () => {
     serviceReadiness({
       applications: [{ status: "running:unknown" }, { status: "running:healthy" }],
     }),
-    "starting",
+    "running",
   );
+  assert.equal(serviceReadiness({ applications: [{ status: "starting:unknown" }] }), "starting");
   assert.equal(
     serviceReadiness({
       applications: [{ status: "running:healthy" }],
@@ -58,16 +59,30 @@ test("hosts stay one label under the zone", () => {
     }),
     "running",
   );
-  assert.equal(serviceReadiness({ status: "exited" }), "starting");
+  assert.equal(serviceReadiness({ status: "exited" }), "failed");
+  assert.equal(
+    serviceReadiness({ applications: [{ status: "exited" }, { status: "pulling" }] }),
+    "starting",
+  );
+  assert.deepEqual(
+    hostsFromCoolifyService(
+      {
+        applications: [
+          { name: "gateway", fqdn: "https://demo.carsgames.org" },
+          { name: "studio", fqdn: "https://demo-studio.carsgames.org" },
+        ],
+      },
+      "demo",
+      "carsgames.org",
+    ),
+    { apiHost: "demo.carsgames.org", studioHost: "demo-studio.carsgames.org" },
+  );
   assert.deepEqual(both.coolifyUrls, [
-    {
-      name: "gateway",
-      url: "https://api.acme.test,http://api.acme.test,https://acme.covixy.com,http://acme.covixy.com",
-    },
+    { name: "gateway", url: "https://api.acme.test,http://api.acme.test" },
     { name: "studio", url: "https://panel.acme.test,http://panel.acme.test" },
   ]);
   assert.ok(both.redirectUrls.includes("http://api.acme.test"));
-  assert.ok(both.apiUrls.includes("https://acme.covixy.com"));
+  assert.equal(both.apiUrls.includes("https://acme.covixy.com"), false);
   assert.equal(validateApex("covixy.com"), null);
   assert.ok(validateApex("https://covixy.com"));
 });
@@ -84,8 +99,13 @@ test("compose placeholders are all given to Coolify", () => {
   assert.match(yaml, /supabase\/gotrue:v2\.197\.0/);
   assert.equal(yaml.includes(secrets.postgresPassword), false);
   assert.equal(yaml.includes(secrets.serviceRoleKey), false);
-  const roles = Buffer.from(yaml.match(/echo '([A-Za-z0-9+/=]+)'/)?.[1] || "", "base64").toString("utf8");
+  const blobs = [...yaml.matchAll(/echo '([A-Za-z0-9+/=]+)'/g)].map((match) =>
+    Buffer.from(match[1] || "", "base64").toString("utf8"),
+  );
+  const roles = blobs[0] || "";
   assert.match(roles, /\$POSTGRES_PASSWORD/);
+  assert.ok(blobs.some((text) => text.includes("banned_until")));
+  assert.match(yaml, /SUPABASE_PUBLISHABLE_KEY/);
   assert.equal(scrubSecrets(`failed ${secrets.serviceRoleKey}`, [secrets.serviceRoleKey]).includes("eyJ"), false);
   assert.equal(scrubSecrets("template covixy-supabase", ["supabase", secrets.serviceRoleKey]), "template covixy-supabase");
 });
@@ -130,6 +150,7 @@ test("rehearsal create, pause, resume, and delete", async () => {
   await worker.processQueue();
   const running = projects.getProject(created.id);
   assert.equal(running?.status, "running");
+  assert.equal(running?.keysLocal, true);
   assert.equal(running?.coolifyServiceUuid, "rehearsal-acme");
   assert.equal(running?.postgresMajor, 17);
 
@@ -263,4 +284,71 @@ test("a replaced environment key does not make saved secrets unreadable", async 
   assert.equal(crypto.encryptionKeyDiffersFromEnv(), true);
   delete process.env.PANEL_ENCRYPTION_KEY;
   crypto.resetEncryptionKeyForTests();
+});
+
+test("a replaced panel database keeps setup and the Coolify service", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "csm-recall-"));
+  process.env.PANEL_DB_PATH = path.join(dir, "panel.db");
+  process.env.PANEL_ENCRYPTION_KEY = Buffer.alloc(32, 5).toString("base64");
+  process.env.APEX_DOMAIN = "carsgames.org";
+  process.env.COOLIFY_API_URL = "https://coolify.example.com";
+  process.env.COOLIFY_API_TOKEN = "4|secret";
+  process.env.COOLIFY_PROJECT_UUID = "project";
+  process.env.COOLIFY_SERVER_UUID = "server";
+  delete process.env.COOLIFY_ENVIRONMENT_NAME;
+
+  const db = await import("../lib/db.ts");
+  const crypto = await import("../lib/crypto.ts");
+  db.resetDbForTests();
+  crypto.resetEncryptionKeyForTests();
+  const settings = await import("../lib/settings.ts");
+  const projects = await import("../lib/projects.ts");
+  const compose = await import("../lib/compose.ts");
+
+  assert.equal(settings.isInstalled(), true);
+  assert.equal(settings.getSetting("installed"), "1");
+  assert.equal(settings.coolifyConfig().project, "project");
+
+  const recovered = projects.rememberRunningService({
+    slug: "demo",
+    uuid: "service-uuid",
+    apiHost: "demo.carsgames.org",
+    studioHost: "demo-studio.carsgames.org",
+    envValues: {},
+  });
+  assert.equal(recovered?.status, "running");
+  assert.equal(recovered?.keysLocal, false);
+  assert.equal(recovered?.coolifyServiceUuid, "service-uuid");
+  projects.requestProvision(recovered!.id);
+  assert.equal(projects.getProject(recovered!.id)?.status, "queued");
+  assert.throws(() => projects.exportProjectArchive(recovered!.id), /offline file/);
+
+  const secrets = generateStackSecrets();
+  const restored = projects.restoreProject({
+    format: "covixy-supa-offline",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    name: "Demo",
+    slug: "demo",
+    postgresMajor: 17,
+    scheme: "https",
+    customDomain: null,
+    panelHost: null,
+    env: compose.stackEnv({
+      name: "Demo",
+      slug: "demo",
+      apiUrl: "https://demo.carsgames.org",
+      secrets,
+    }),
+  });
+  assert.equal(restored.id, recovered?.id);
+  assert.equal(restored.keysLocal, true);
+  assert.equal(restored.status, "queued");
+  assert.equal(restored.coolifyServiceUuid, "service-uuid");
+  assert.equal(projects.revealSecret(restored.id, "serviceRole"), secrets.serviceRoleKey);
+
+  delete process.env.COOLIFY_API_URL;
+  delete process.env.COOLIFY_API_TOKEN;
+  delete process.env.COOLIFY_PROJECT_UUID;
+  delete process.env.COOLIFY_SERVER_UUID;
 });

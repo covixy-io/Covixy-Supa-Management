@@ -34,8 +34,48 @@ export function setSetting(key: string, value: string): void {
     .run(key, value);
 }
 
+export function envCompletesInstall(): boolean {
+  return Boolean(
+    process.env.APEX_DOMAIN?.trim() &&
+      process.env.COOLIFY_API_URL?.trim() &&
+      normalizeCoolifyToken(process.env.COOLIFY_API_TOKEN || "").includes("|") &&
+      process.env.COOLIFY_PROJECT_UUID?.trim() &&
+      process.env.COOLIFY_SERVER_UUID?.trim(),
+  );
+}
+
+function adoptInstallFromEnv(): void {
+  if (getSetting("installed") === "1") return;
+  const apex = process.env.APEX_DOMAIN?.trim().toLowerCase();
+  const url = process.env.COOLIFY_API_URL?.trim().replace(/\/+$/, "");
+  const project = process.env.COOLIFY_PROJECT_UUID?.trim();
+  const server = process.env.COOLIFY_SERVER_UUID?.trim();
+  const environment = process.env.COOLIFY_ENVIRONMENT_NAME?.trim();
+  const name = process.env.SERVER_NAME?.trim();
+  if (apex && !getSetting("apex_domain")) setSetting("apex_domain", apex);
+  if (url && !getSetting("coolify_api_url")) setSetting("coolify_api_url", url);
+  if (project && !getSetting("coolify_project_uuid")) setSetting("coolify_project_uuid", project);
+  if (server && !getSetting("coolify_server_uuid")) setSetting("coolify_server_uuid", server);
+  if (environment && !getSetting("coolify_environment_name")) setSetting("coolify_environment_name", environment);
+  if (name && !getSetting("server_name")) setSetting("server_name", name);
+  const token = normalizeCoolifyToken(process.env.COOLIFY_API_TOKEN || "");
+  if (token && !getSetting("coolify_token_ciphertext")) {
+    try {
+      const packed = encryptJson(token);
+      setSetting("coolify_token_ciphertext", packed.ciphertext);
+      setSetting("coolify_token_nonce", packed.nonce);
+    } catch {
+      // The environment variable still supplies the token on this boot.
+    }
+  }
+  setSetting("installed", "1");
+}
+
 export function isInstalled(): boolean {
-  return getSetting("installed") === "1";
+  if (getSetting("installed") === "1") return true;
+  if (!envCompletesInstall()) return false;
+  adoptInstallFromEnv();
+  return true;
 }
 
 export function panelApex(): string {

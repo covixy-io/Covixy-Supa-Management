@@ -186,26 +186,105 @@ export async function deleteService(uuid: string): Promise<void> {
   await coolifyFetch(`/services/${uuid}?${query}`, { method: "DELETE" });
 }
 
-export function serviceReadiness(payload: unknown): "starting" | "running" {
+function statusText(value: unknown): string {
+  if (typeof value === "string") return value.toLowerCase();
+  if (value && typeof value === "object") {
+    const row = value as { status?: unknown; state?: unknown };
+    if (row.status !== undefined && row.status !== value) return statusText(row.status);
+    if (typeof row.state === "string") return row.state.toLowerCase();
+  }
+  return "";
+}
+
+export function serviceReadiness(payload: unknown): "starting" | "running" | "failed" {
   const body = payload && typeof payload === "object" ? (payload as { status?: unknown; applications?: unknown; databases?: unknown }) : {};
   const children = [...asRows(body.applications), ...asRows(body.databases)];
   const statuses = (children.length ? children : [{ status: body.status }])
-    .map((row) => String(row.status || "").toLowerCase())
+    .map((row) => statusText(row.status))
     .filter(Boolean);
   if (!statuses.length) return "starting";
   const pending = (status: string) =>
+    !status.startsWith("running") &&
     ["unknown", "starting", "restart", "created", "pull", "removing"].some((word) => status.includes(word));
   const down = (status: string) => ["unhealthy", "exited", "dead"].some((word) => status.includes(word));
-  const up = statuses.every((status) => !pending(status) && !down(status) && (status.includes("running") || status.includes("healthy")));
-  return up ? "running" : "starting";
+  const up = (status: string) =>
+    !pending(status) && !down(status) && (status.includes("running") || status.includes("healthy"));
+  if (statuses.every(up)) return "running";
+  if (statuses.some(down) && !statuses.some(pending)) return "failed";
+  return "starting";
+}
+
+export function hostsFromCoolifyService(
+  payload: unknown,
+  slug: string,
+  apex: string,
+): { apiHost: string; studioHost: string } {
+  const found: string[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const row = value as Record<string, unknown>;
+    for (const key of ["fqdn", "url"]) {
+      if (typeof row[key] === "string") found.push(row[key]);
+    }
+    for (const child of Object.values(row)) {
+      if (child && typeof child === "object") visit(child);
+    }
+  };
+  visit(payload);
+  const hosts = [
+    ...new Set(
+      found
+        .flatMap((entry) => entry.split(","))
+        .map((part) => part.trim().replace(/^https?:\/\//i, "").split("/")[0].toLowerCase())
+        .filter((host) => host.includes(".")),
+    ),
+  ];
+  const studioHost =
+    hosts.find((host) => host.startsWith(`${slug}-studio.`)) ||
+    hosts.find((host) => host.includes("-studio.")) ||
+    `${slug}-studio.${apex}`;
+  const apiHost = hosts.find((host) => host !== studioHost) || `${slug}.${apex}`;
+  return { apiHost, studioHost };
 }
 
 function asRows(value: unknown): { status?: unknown }[] {
   return Array.isArray(value) ? (value as { status?: unknown }[]) : [];
 }
 
+function asList(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object" && Array.isArray((data as { data?: unknown }).data)) {
+    return (data as { data: unknown[] }).data;
+  }
+  return [];
+}
+
 export async function getService(uuid: string): Promise<unknown> {
   return coolifyFetch(`/services/${encodeURIComponent(uuid)}`);
+}
+
+export async function listServices(): Promise<{ name: string; uuid: string }[]> {
+  if (coolifyMode() === "rehearsal") return [];
+  return asList(await coolifyFetch("/services"))
+    .map((row) => {
+      const item = row as { name?: string; uuid?: string };
+      return { name: String(item.name || ""), uuid: String(item.uuid || "") };
+    })
+    .filter((item) => item.uuid);
+}
+
+export async function readServiceEnvValues(uuid: string): Promise<Record<string, string>> {
+  if (coolifyMode() === "rehearsal") return {};
+  const values: Record<string, string> = {};
+  for (const row of asList(await coolifyFetch(`/services/${encodeURIComponent(uuid)}/envs`))) {
+    const item = row as { key?: string; value?: unknown };
+    if (item.key && typeof item.value === "string" && item.value) values[item.key] = item.value;
+  }
+  return values;
 }
 
 export async function fetchConfiguredServer(): Promise<unknown | null> {

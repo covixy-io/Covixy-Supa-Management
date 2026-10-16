@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
 import { decryptJson, encryptJson } from "@/lib/crypto";
-import { validateApex, validateSlug } from "@/lib/hosts";
+import { hostsFor, validateApex, validateSlug } from "@/lib/hosts";
 import { applyAddressEnv, parseScheme, resolveAddressInput } from "@/lib/urls";
 import { parseArchive, retargetArchiveEnv, secretsFromEnv, ARCHIVE_FORMAT, type ProjectArchive } from "@/lib/archive";
 import { capacity } from "@/lib/capacity";
@@ -26,6 +26,7 @@ type ProjectRow = {
   template_version: string;
   postgres_major: number;
   coolify_service_uuid: string | null;
+  keys_local: number | null;
   ram_mb: number;
   error: string | null;
   created_at: string;
@@ -47,6 +48,9 @@ type JobRow = {
 
 export class PanelError extends Error {}
 
+export const RECOVERED_STACK_MESSAGE =
+  "This stack is still on Coolify and its database is still there. Update stack sends the new compose and leaves the keys already on that service. Restore the offline file to see those keys here. Deleting this row keeps the Coolify service.";
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -66,6 +70,7 @@ function mapProject(row: ProjectRow): Project {
     templateVersion: row.template_version,
     postgresMajor: row.postgres_major,
     coolifyServiceUuid: row.coolify_service_uuid,
+    keysLocal: row.keys_local == null || Number(row.keys_local) !== 0,
     ramMb: row.ram_mb,
     error: row.error,
     createdAt: row.created_at,
@@ -123,6 +128,19 @@ export function listProjects(): Project[] {
 export function getProject(id: string): Project | null {
   const row = getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow | undefined;
   return row ? mapProject(row) : null;
+}
+
+export function getProjectBySlug(slug: string): Project | null {
+  const row = getDb().prepare("SELECT * FROM projects WHERE slug = ?").get(slug) as ProjectRow | undefined;
+  return row ? mapProject(row) : null;
+}
+
+function assertKeysLocal(project: Project): void {
+  if (!project.keysLocal) {
+    throw new PanelError(
+      "Restore the offline file before changing keys or addresses. This panel does not hold the original keys, and saving now would replace them on the running stack.",
+    );
+  }
 }
 
 export function capacitySnapshot() {
@@ -327,6 +345,7 @@ export function updateProjectAddresses(
 ): void {
   const project = getProject(projectId);
   if (!project) throw new PanelError("Project not found.");
+  assertKeysLocal(project);
   const apex = panelApex();
   const resolved = resolveAddressInput({
     slug: project.slug,
@@ -357,6 +376,7 @@ export function updateProjectAddresses(
 export function exportProjectArchive(projectId: string): ProjectArchive {
   const project = getProject(projectId);
   if (!project) throw new PanelError("Project not found.");
+  assertKeysLocal(project);
   const env = readEnv(projectId);
   writeAudit("project.exported", project, project.slug);
   return {
@@ -371,6 +391,120 @@ export function exportProjectArchive(projectId: string): ProjectArchive {
     panelHost: project.panelHost,
     env,
   };
+}
+
+export function rememberRunningService(input: {
+  slug: string;
+  uuid: string;
+  apiHost: string;
+  studioHost: string;
+  envValues: Record<string, string>;
+}): Project | null {
+  if (validateSlug(input.slug)) return null;
+  const existing = getProjectBySlug(input.slug);
+  if (existing) {
+    if (!existing.coolifyServiceUuid) updateProjectState(existing.id, { coolifyServiceUuid: input.uuid });
+    return getProject(existing.id);
+  }
+  const apex = panelApex();
+  if (validateApex(apex)) return null;
+  const defaults = hostsFor(input.slug, apex);
+  const resolved = resolveAddressInput({
+    slug: input.slug,
+    apex,
+    scheme: "https",
+    customDomain: input.apiHost === defaults.apiHost ? "" : input.apiHost,
+    panelHost: input.studioHost === defaults.studioHost ? "" : input.studioHost,
+  });
+  if (resolved.error) return null;
+  const addresses = resolved.addresses;
+  try {
+    assertHostsFree(
+      [addresses.apiHost, addresses.studioHost, addresses.customDomain || "", addresses.panelHost || ""].filter(Boolean),
+    );
+  } catch {
+    return null;
+  }
+
+  const required = ["POSTGRES_PASSWORD", "JWT_SECRET", "ANON_KEY", "SERVICE_ROLE_KEY"] as const;
+  const haveKeys = required.every((key) => Boolean(input.envValues[key]));
+  const generated = generateStackSecrets();
+  const secrets = haveKeys
+    ? {
+        ...generated,
+        postgresPassword: input.envValues.POSTGRES_PASSWORD,
+        jwtSecret: input.envValues.JWT_SECRET,
+        anonKey: input.envValues.ANON_KEY,
+        serviceRoleKey: input.envValues.SERVICE_ROLE_KEY,
+        secretKeyBase: input.envValues.SECRET_KEY_BASE || generated.secretKeyBase,
+        pgMetaCryptoKey: input.envValues.PG_META_CRYPTO_KEY || generated.pgMetaCryptoKey,
+        realtimeDbEncKey: input.envValues.REALTIME_DB_ENC_KEY || generated.realtimeDbEncKey,
+        dashboardUsername: input.envValues.DASHBOARD_USERNAME || generated.dashboardUsername,
+        dashboardPassword: input.envValues.DASHBOARD_PASSWORD || generated.dashboardPassword,
+        s3ProtocolAccessKeyId: input.envValues.S3_PROTOCOL_ACCESS_KEY_ID || generated.s3ProtocolAccessKeyId,
+        s3ProtocolAccessKeySecret: input.envValues.S3_PROTOCOL_ACCESS_KEY_SECRET || generated.s3ProtocolAccessKeySecret,
+      }
+    : generated;
+  const env = applyAddressEnv(
+    stackEnv({ name: input.slug, slug: input.slug, apiUrl: addresses.canonicalApiUrl, secrets }),
+    addresses,
+  );
+  if (haveKeys) {
+    for (const [key, value] of Object.entries(input.envValues)) {
+      if (env[key] && value) env[key] = { ...env[key], value };
+    }
+  }
+
+  const id = randomUUID();
+  const timestamp = now();
+  const packed = encryptJson(secrets);
+  const envPacked = encryptJson(env);
+  const database = getDb();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database
+      .prepare(
+        `INSERT INTO projects (
+          id, name, slug, status, api_host, studio_host, template_id, template_version,
+          postgres_major, coolify_service_uuid, ram_mb, error, url_scheme, custom_domain, panel_host,
+          keys_local, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.slug,
+        input.slug,
+        "running",
+        addresses.apiHost,
+        addresses.studioHost,
+        TEMPLATE.id,
+        TEMPLATE.version,
+        TEMPLATE.postgresMajor,
+        input.uuid,
+        TEMPLATE.ramMb,
+        haveKeys ? null : RECOVERED_STACK_MESSAGE,
+        addresses.scheme,
+        addresses.customDomain,
+        addresses.panelHost,
+        haveKeys ? 1 : 0,
+        timestamp,
+        timestamp,
+      );
+    database
+      .prepare("INSERT INTO secrets (project_id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?)")
+      .run(id, packed.ciphertext, packed.nonce, timestamp);
+    database
+      .prepare("INSERT INTO project_env (project_id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?)")
+      .run(id, envPacked.ciphertext, envPacked.nonce, timestamp);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    if (error instanceof Error && error.message.includes("UNIQUE")) return null;
+    throw error;
+  }
+  const project = getProject(id);
+  if (project) writeAudit("project.recovered", project, input.uuid);
+  return project;
 }
 
 export function restoreProject(input: unknown, slugOverride?: string): Project {
@@ -391,6 +525,56 @@ export function restoreProject(input: unknown, slugOverride?: string): Project {
   });
   if (resolved.error) throw new PanelError(resolved.error);
   const addresses = resolved.addresses;
+  const existing = getProjectBySlug(slug);
+  if (existing && !existing.keysLocal) {
+    assertHostsFree(
+      [addresses.apiHost, addresses.studioHost, addresses.customDomain || "", addresses.panelHost || ""].filter(Boolean),
+      existing.id,
+    );
+    const apiUrl = addresses.canonicalApiUrl;
+    const baseEnv = slug === archive.slug ? archive.env : retargetArchiveEnv(archive.env, { name, slug, apiUrl });
+    const env = applyAddressEnv(baseEnv, addresses);
+    const secrets = secretsFromEnv(env);
+    const timestamp = now();
+    const packed = encryptJson(secrets);
+    const envPacked = encryptJson(env);
+    const database = getDb();
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database
+        .prepare(
+          `UPDATE projects
+           SET name = ?, status = 'queued', api_host = ?, studio_host = ?, url_scheme = ?, custom_domain = ?,
+               panel_host = ?, error = NULL, keys_local = 1, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          name,
+          addresses.apiHost,
+          addresses.studioHost,
+          addresses.scheme,
+          addresses.customDomain,
+          addresses.panelHost,
+          timestamp,
+          existing.id,
+        );
+      database
+        .prepare("UPDATE secrets SET ciphertext = ?, nonce = ?, updated_at = ? WHERE project_id = ?")
+        .run(packed.ciphertext, packed.nonce, timestamp, existing.id);
+      database
+        .prepare("UPDATE project_env SET ciphertext = ?, nonce = ?, updated_at = ? WHERE project_id = ?")
+        .run(envPacked.ciphertext, envPacked.nonce, timestamp, existing.id);
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    const project = getProject(existing.id);
+    if (!project) throw new PanelError("Project was not restored.");
+    enqueue(project, "provision");
+    writeAudit("project.restored", project, `Restored keys for ${slug}`);
+    return project;
+  }
   try {
     assertHostsFree([
       addresses.apiHost,
@@ -503,6 +687,7 @@ export function requestDelete(id: string): Project {
 
 export function requestProvision(id: string): Project {
   const project = requireProject(id, ["failed", "queued", "running", "starting"], "provision");
+  if (!project.keysLocal && !project.coolifyServiceUuid) throw new PanelError(RECOVERED_STACK_MESSAGE);
   setStatus(id, "queued");
   const next = getProject(id)!;
   enqueue(next, "provision");
@@ -595,6 +780,7 @@ export function updateEnvValue(projectId: string, key: string, value: string): v
   if (value.length > 8000) throw new PanelError("That value is too long.");
   const project = getProject(projectId);
   if (!project) throw new PanelError("Project not found.");
+  assertKeysLocal(project);
   const env = readEnv(projectId);
   if (!env[key]) throw new PanelError("That variable is not part of this stack.");
   env[key] = { ...env[key], value };

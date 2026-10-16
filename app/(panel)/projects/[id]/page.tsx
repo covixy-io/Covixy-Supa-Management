@@ -150,7 +150,13 @@ export default async function ProjectPage({
             </div>
           ) : null}
 
-          <ProjectActions id={project.id} slug={project.slug} status={project.status} lastJob={job?.type ?? null} />
+          <ProjectActions
+            id={project.id}
+            slug={project.slug}
+            status={project.status}
+            lastJob={job?.type ?? null}
+            keysLocal={project.keysLocal}
+          />
         </aside>
       </section>
     </div>

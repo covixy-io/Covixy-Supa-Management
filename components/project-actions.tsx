@@ -19,11 +19,13 @@ export function ProjectActions({
   slug,
   status,
   lastJob,
+  keysLocal = true,
 }: {
   id: string;
   slug: string;
   status: string;
   lastJob: JobType | null;
+  keysLocal?: boolean;
 }) {
   const [confirm, setConfirm] = useState("");
   const showPause = status === "running" || (status === "failed" && lastJob === "pause");
@@ -72,8 +74,9 @@ export function ProjectActions({
         ) : null}
       </div>
       <p className="text-muted text-sm">
-        Update stack sends the saved compose and keys again. It does not ask for them a second time. Coolify’s Deploy
-        button can open an empty form and replace those keys, so use this button instead.
+        {keysLocal
+          ? "Update stack sends the saved compose and keys again. It does not ask for them a second time. Coolify’s Deploy button can open an empty form and replace those keys, so use this button instead."
+          : "Update stack sends the new compose and restarts the service. It leaves the keys already stored on that Coolify service."}
       </p>
       {showDelete ? (
         <form action={deleteProjectAction} className="card p-4">

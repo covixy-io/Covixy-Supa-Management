@@ -57,9 +57,9 @@ export function SetupWizard() {
         <ThemeToggle />
       </div>
       <p className="text-muted mt-2 text-sm">
-        This is stored in the data directory and is not asked again while that directory is kept. On Coolify, mount a
-        persistent volume at /app/data before you press Deploy, or the next deploy shows this form again. Supabase
-        stacks already in Coolify keep running either way.
+        Restart, Redeploy, and Deploy keep this form closed when the apex domain and Coolify connection are already
+        environment variables on this application. Mount a persistent volume at /app/data before the first Deploy so
+        projects and keys stay in this panel. Supabase stacks already in Coolify keep their databases either way.
       </p>
       <form
         action={action}
