@@ -502,7 +502,7 @@ export function requestDelete(id: string): Project {
 }
 
 export function requestProvision(id: string): Project {
-  const project = requireProject(id, ["failed", "queued"], "provision");
+  const project = requireProject(id, ["failed", "queued", "running", "starting"], "provision");
   setStatus(id, "queued");
   const next = getProject(id)!;
   enqueue(next, "provision");

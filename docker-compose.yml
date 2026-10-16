@@ -1,6 +1,6 @@
 services:
   panel:
-    image: docker.io/covixy/covixy-supa-management:1
+    build: .
     restart: unless-stopped
     environment:
       HOSTNAME: 0.0.0.0

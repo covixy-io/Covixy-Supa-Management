@@ -79,6 +79,9 @@ test("compose placeholders are all given to Coolify", () => {
   const missing = [...new Set(composePlaceholders(yaml))].filter((key) => !(key in env));
   assert.deepEqual(missing, []);
   assert.match(yaml, /name: supa-acme/);
+  assert.match(yaml, /roles-applied/);
+  assert.match(yaml, /SNIPPETS_MANAGEMENT_FOLDER/);
+  assert.match(yaml, /supabase\/gotrue:v2\.197\.0/);
   assert.equal(yaml.includes(secrets.postgresPassword), false);
   assert.equal(yaml.includes(secrets.serviceRoleKey), false);
   const roles = Buffer.from(yaml.match(/echo '([A-Za-z0-9+/=]+)'/)?.[1] || "", "base64").toString("utf8");

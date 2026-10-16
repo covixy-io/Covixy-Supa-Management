@@ -113,6 +113,28 @@ export async function createService(input: {
   return created.uuid;
 }
 
+export async function updateServiceCompose(uuid: string, compose: string): Promise<void> {
+  if (coolifyMode() === "rehearsal") return;
+  await coolifyFetch(`/services/${uuid}`, {
+    method: "PATCH",
+    body: JSON.stringify({ docker_compose_raw: Buffer.from(compose, "utf8").toString("base64") }),
+  });
+}
+
+export async function restartOrStart(uuid: string): Promise<void> {
+  if (coolifyMode() === "rehearsal") return;
+  try {
+    await restartService(uuid);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/stopped|not running|exited/i.test(message)) {
+      await startService(uuid);
+      return;
+    }
+    throw error;
+  }
+}
+
 export async function updateServiceUrls(uuid: string, urls: { name: string; url: string }[]): Promise<void> {
   if (coolifyMode() === "rehearsal") return;
   await coolifyFetch(`/services/${uuid}`, {

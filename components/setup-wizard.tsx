@@ -56,7 +56,11 @@ export function SetupWizard() {
         </div>
         <ThemeToggle />
       </div>
-      <p className="text-muted mt-2 text-sm">This runs once. Server RAM is refreshed from Coolify whenever that server reports its specs.</p>
+      <p className="text-muted mt-2 text-sm">
+        This is stored in the data directory and is not asked again while that directory is kept. On Coolify, mount a
+        persistent volume at /app/data before you press Deploy, or the next deploy shows this form again. Supabase
+        stacks already in Coolify keep running either way.
+      </p>
       <form
         action={action}
         className="card mt-8 p-6"

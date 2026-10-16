@@ -4,11 +4,13 @@ import {
   createService,
   deleteService,
   getService,
+  restartOrStart,
   restartService,
   serviceReadiness,
   setServiceEnv,
   startService,
   stopService,
+  updateServiceCompose,
   updateServiceUrls,
   coolifyMode,
 } from "@/lib/coolify";
@@ -62,6 +64,7 @@ async function provision(job: Job): Promise<void> {
   if (missing.length) throw new Error(`Compose is missing env: ${missing.join(", ")}`);
 
   let uuid = project.coolifyServiceUuid;
+  const existing = Boolean(uuid);
   if (!uuid) {
     log(job, secretValues, "creating Coolify service");
     uuid = await createService({
@@ -73,15 +76,17 @@ async function provision(job: Job): Promise<void> {
     updateProjectState(project.id, { coolifyServiceUuid: uuid });
     log(job, secretValues, `service ${uuid}`);
   } else {
-    log(job, secretValues, `reusing service ${uuid}`);
+    log(job, secretValues, `updating service ${uuid}`);
+    await updateServiceCompose(uuid, compose);
   }
 
   log(job, secretValues, "setting domains");
   await updateServiceUrls(uuid, addresses.coolifyUrls);
   log(job, secretValues, "writing environment");
   await setServiceEnv(uuid, env);
-  log(job, secretValues, "starting service");
-  await startService(uuid);
+  log(job, secretValues, existing ? "restarting service" : "starting service");
+  if (existing) await restartOrStart(uuid);
+  else await startService(uuid);
   updateProjectState(project.id, { status: "starting", error: null });
   writeAudit("project.provisioned", project, `${coolifyMode()} ${uuid}`);
   log(job, secretValues, "Coolify queued the start. Images can take several minutes to download.");

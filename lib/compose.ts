@@ -30,7 +30,13 @@ function dbBoot(rolesB64: string, jwtB64: string): string {
   return `mkdir -p /docker-entrypoint-initdb.d/init-scripts
 echo '${rolesB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
 echo '${jwtB64}' | base64 -d > /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
-exec docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf -c log_min_messages=fatal`;
+docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf -c log_min_messages=fatal &
+child=$!
+until pg_isready -U postgres -h localhost; do sleep 1; done
+psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-roles.sql || exit 1
+psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql || exit 1
+touch /tmp/roles-applied
+wait "$child"`;
 }
 
 function gatewayBoot(): string {
@@ -100,13 +106,14 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
     volumes:
       - db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      test: ["CMD-SHELL", "test -f /tmp/roles-applied && pg_isready -U postgres -h localhost"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 20s
 
   auth:
-    image: supabase/gotrue:v2.196.0
+    image: supabase/gotrue:v2.197.0
     restart: unless-stopped
     depends_on:
       db:
@@ -149,7 +156,7 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       start_period: 10s
 
   rest:
-    image: postgrest/postgrest:v14.17
+    image: postgrest/postgrest:v14.18
     restart: unless-stopped
     depends_on:
       db:
@@ -171,7 +178,7 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       retries: 12
 
   realtime:
-    image: supabase/realtime:v2.134.10
+    image: supabase/realtime:v2.143.3
     restart: unless-stopped
     depends_on:
       db:
@@ -209,7 +216,7 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       IMGPROXY_MAX_SRC_RESOLUTION: 16.8
 
   storage:
-    image: supabase/storage-api:v1.74.0
+    image: supabase/storage-api:v1.81.0
     restart: unless-stopped
     depends_on:
       db:
@@ -246,7 +253,7 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       start_period: 10s
 
   meta:
-    image: supabase/postgres-meta:v0.99.0
+    image: supabase/postgres-meta:v0.100.0
     restart: unless-stopped
     depends_on:
       db:
@@ -261,10 +268,12 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       CRYPTO_KEY: \${PG_META_CRYPTO_KEY}
 
   studio:
-    image: supabase/studio:2026.09.07-sha-7996410
+    image: supabase/studio:2026.10.12-sha-3699278
     restart: unless-stopped
     ports:
       - "3000"
+    volumes:
+      - snippets:/app/snippets
     depends_on:
       meta:
         condition: service_started
@@ -285,6 +294,7 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
       SUPABASE_ANON_KEY: \${ANON_KEY}
       SUPABASE_SERVICE_KEY: \${SERVICE_ROLE_KEY}
       AUTH_JWT_SECRET: \${JWT_SECRET}
+      SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
 
   gateway:
     image: caddy:2.10-alpine
@@ -308,6 +318,7 @@ ${indent(gatewayBoot(), 8)}
 volumes:
   db:
   storage:
+  snippets:
 `;
 }
 

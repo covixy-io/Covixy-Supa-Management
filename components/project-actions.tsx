@@ -43,6 +43,15 @@ export function ProjectActions({
             </button>
           </form>
         ) : null}
+        {status === "running" || status === "starting" ? (
+          <form action={provisionProjectAction}>
+            <HiddenId id={id} />
+            <button type="submit" className="btn btn-primary">
+              <RefreshCw size={16} />
+              Update stack
+            </button>
+          </form>
+        ) : null}
         {showPause ? (
           <form action={pauseProjectAction}>
             <HiddenId id={id} />
@@ -62,6 +71,10 @@ export function ProjectActions({
           </form>
         ) : null}
       </div>
+      <p className="text-muted text-sm">
+        Update stack sends the saved compose and keys again. It does not ask for them a second time. Coolify’s Deploy
+        button can open an empty form and replace those keys, so use this button instead.
+      </p>
       {showDelete ? (
         <form action={deleteProjectAction} className="card p-4">
           <HiddenId id={id} slug={slug} />
