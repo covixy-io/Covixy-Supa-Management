@@ -19,6 +19,21 @@ function coolifyErrorDetails(errors: unknown): string {
     .join(" ");
 }
 
+function coolifyConflictDetails(conflicts: unknown): string {
+  if (!Array.isArray(conflicts)) return "";
+  return conflicts
+    .map((conflict) => {
+      if (!conflict || typeof conflict !== "object") return "";
+      const row = conflict as { domain?: unknown; message?: unknown; resource_name?: unknown };
+      if (typeof row.message === "string" && row.message) return row.message;
+      const domain = typeof row.domain === "string" ? row.domain : "";
+      const name = typeof row.resource_name === "string" ? row.resource_name : "";
+      return [domain, name].filter(Boolean).join(" is already used by ");
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
 function apiBase(): string {
   const raw = coolifyConfig().url.replace(/\/$/, "");
   return raw.endsWith("/api/v1") ? raw : `${raw}/api/v1`;
@@ -38,9 +53,9 @@ async function coolifyFetch(path: string, init?: RequestInit): Promise<unknown> 
   if (!response.ok) {
     let message = text.slice(0, 800);
     try {
-      const body = JSON.parse(text) as { message?: string; errors?: unknown };
+      const body = JSON.parse(text) as { message?: string; errors?: unknown; conflicts?: unknown };
       if (body.message) message = body.message;
-      const details = coolifyErrorDetails(body.errors);
+      const details = [coolifyErrorDetails(body.errors), coolifyConflictDetails(body.conflicts)].filter(Boolean).join(" ");
       if (details) message = `${message} ${details}`;
     } catch {
       // Coolify sometimes returns plain text.
@@ -72,7 +87,7 @@ export async function createService(input: {
     instant_deploy: false,
     docker_compose_raw: Buffer.from(input.compose, "utf8").toString("base64"),
     urls: input.urls,
-    force_domain_override: false,
+    force_domain_override: true,
   };
   if (coolifyConfig().destination) body.destination_uuid = coolifyConfig().destination;
 
@@ -84,7 +99,8 @@ export async function createService(input: {
     })) as { uuid?: string };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (!/urls:.*not allowed/i.test(message)) throw error;
+    const urlsRejected = /urls:.*not allowed/i.test(message) || /domain conflict/i.test(message);
+    if (!urlsRejected) throw error;
     const withoutUrls = { ...body };
     delete withoutUrls.urls;
     delete withoutUrls.force_domain_override;
