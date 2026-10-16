@@ -1,0 +1,171 @@
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { capacity } from "../lib/capacity.ts";
+import { reserveFromSpecs, specsFromCoolify } from "../lib/server-specs.ts";
+import { composePlaceholders, renderCompose, stackEnv } from "../lib/compose.ts";
+import { hostsFor, singleLabelHosts, validateApex, validateSlug } from "../lib/hosts.ts";
+import { describeAddresses } from "../lib/urls.ts";
+import { decodeJwtPayload, generateStackSecrets, scrubSecrets, signJwt } from "../lib/secrets.ts";
+
+test("keys are signed for anon and service_role and expire after 2030", () => {
+  const secrets = generateStackSecrets();
+  for (const [token, role] of [
+    [secrets.anonKey, "anon"],
+    [secrets.serviceRoleKey, "service_role"],
+  ] as const) {
+    const payload = decodeJwtPayload(token);
+    assert.equal(payload.role, role);
+    assert.equal(payload.iss, "supabase");
+    assert.equal(token, signJwt(payload, secrets.jwtSecret));
+    assert.ok(Number(payload.exp) > Date.parse("2030-01-01") / 1000);
+  }
+  assert.ok(secrets.postgresPassword.length >= 24);
+  assert.equal(secrets.dashboardUsername, "supabase");
+});
+
+test("hosts stay one label under the zone", () => {
+  assert.equal(validateSlug("acme"), null);
+  assert.ok(validateSlug("1acme"));
+  assert.ok(validateSlug("studio"));
+  assert.deepEqual(hostsFor("acme", "covixy.com"), {
+    apiHost: "acme.covixy.com",
+    studioHost: "acme-studio.covixy.com",
+  });
+  assert.equal(singleLabelHosts("acme", "covixy.com"), true);
+  const both = describeAddresses({
+    apiHost: "acme.covixy.com",
+    studioHost: "acme-studio.covixy.com",
+    scheme: "both",
+    customDomain: "api.acme.test",
+    panelHost: "panel.acme.test",
+  });
+  assert.equal(both.canonicalApiUrl, "https://api.acme.test");
+  assert.equal(both.canonicalPanelUrl, "https://panel.acme.test");
+  assert.ok(both.redirectUrls.includes("http://api.acme.test"));
+  assert.ok(both.apiUrls.includes("https://acme.covixy.com"));
+  assert.equal(validateApex("covixy.com"), null);
+  assert.ok(validateApex("https://covixy.com"));
+});
+
+test("compose placeholders are all given to Coolify", () => {
+  const secrets = generateStackSecrets();
+  const yaml = renderCompose("acme");
+  const env = stackEnv({ name: "Acme", slug: "acme", apiUrl: "https://acme.covixy.com", secrets });
+  const missing = [...new Set(composePlaceholders(yaml))].filter((key) => !(key in env));
+  assert.deepEqual(missing, []);
+  assert.match(yaml, /name: supa-acme/);
+  assert.equal(yaml.includes(secrets.postgresPassword), false);
+  assert.equal(yaml.includes(secrets.serviceRoleKey), false);
+  const roles = Buffer.from(yaml.match(/echo '([A-Za-z0-9+/=]+)'/)?.[1] || "", "base64").toString("utf8");
+  assert.match(roles, /\$POSTGRES_PASSWORD/);
+  assert.equal(scrubSecrets(`failed ${secrets.serviceRoleKey}`, [secrets.serviceRoleKey]).includes("eyJ"), false);
+  assert.equal(scrubSecrets("template covixy-supabase", ["supabase", secrets.serviceRoleKey]), "template covixy-supabase");
+});
+
+test("capacity keeps a reserve", () => {
+  const specs = specsFromCoolify({
+    name: "edge",
+    server_metadata: { memory_bytes: 8192 * 1024 * 1024, cpus: 4, os: "Ubuntu" },
+    settings: { docker_version: "27.0.0", is_reachable: true },
+  });
+  assert.equal(specs?.memoryMb, 8192);
+  assert.equal(specs?.cpus, 4);
+  assert.equal(reserveFromSpecs(8192, 4), 1638);
+  assert.equal(reserveFromSpecs(4096, 2), 1024);
+  assert.equal(specsFromCoolify({ name: "empty" }), null);
+  const first = capacity({ serverRamMb: 8192, reserveMb: 2048, stackRamMb: 1536, activeStacks: 0 });
+  assert.equal(first.canCreate, true);
+  const full = capacity({ serverRamMb: 8192, reserveMb: 2048, stackRamMb: 1536, activeStacks: 4 });
+  assert.equal(full.freeMb, 0);
+  assert.equal(full.canCreate, false);
+});
+
+test("rehearsal create, pause, resume, and delete", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "csm-"));
+  process.env.PANEL_DB_PATH = path.join(dir, "panel.db");
+  process.env.PANEL_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
+  process.env.APEX_DOMAIN = "covixy.com";
+  process.env.SERVER_RAM_MB = "4096";
+  process.env.SERVER_RESERVE_MB = "2048";
+  delete process.env.COOLIFY_API_URL;
+  delete process.env.COOLIFY_API_TOKEN;
+
+  const db = await import("../lib/db.ts");
+  const crypto = await import("../lib/crypto.ts");
+  db.resetDbForTests();
+  crypto.resetEncryptionKeyForTests();
+
+  const projects = await import("../lib/projects.ts");
+  const worker = await import("../lib/worker.ts");
+
+  const created = projects.createProject({ name: "Acme", slug: "acme" });
+  await worker.processQueue();
+  const running = projects.getProject(created.id);
+  assert.equal(running?.status, "running");
+  assert.equal(running?.coolifyServiceUuid, "rehearsal-acme");
+  assert.equal(running?.postgresMajor, 17);
+
+  const revealed = projects.revealSecret(created.id, "serviceRole");
+  assert.equal(decodeJwtPayload(revealed).role, "service_role");
+  assert.equal(JSON.stringify(running).includes(revealed), false);
+
+  const publicEnv = projects.listEnvPublic(created.id);
+  assert.equal(publicEnv.find((row) => row.key === "SERVICE_ROLE_KEY")?.value, null);
+  assert.equal(publicEnv.find((row) => row.key === "REGION")?.value, "local");
+  projects.updateEnvValue(created.id, "REGION", "eu");
+  await worker.processQueue();
+  assert.equal(projects.getProject(created.id)?.status, "running");
+  assert.equal(projects.readEnvValue(created.id, "REGION"), "eu");
+
+  projects.updateProjectAddresses(created.id, {
+    scheme: "both",
+    customDomain: "api.acme.test",
+    panelHost: "panel.acme.test",
+  });
+  await worker.processQueue();
+  assert.equal(projects.getProject(created.id)?.status, "running");
+  assert.equal(projects.readEnvValue(created.id, "API_EXTERNAL_URL"), "https://api.acme.test");
+  assert.match(projects.readEnvValue(created.id, "ADDITIONAL_REDIRECT_URLS"), /http:\/\/api\.acme\.test/);
+
+  const archive = projects.exportProjectArchive(created.id);
+  assert.equal(archive.format, "covixy-supa-offline");
+  assert.equal(archive.env.REGION.value, "eu");
+  assert.equal(archive.env.SERVICE_ROLE_KEY.secret, true);
+  assert.equal(archive.env.SERVICE_ROLE_KEY.value, revealed);
+  assert.equal(JSON.stringify(projects.listEnvPublic(created.id)).includes(revealed), false);
+
+  assert.throws(() => projects.createProject({ name: "Acme Studio", slug: "acme-studio" }), /already used/);
+
+  projects.requestPause(created.id);
+  await worker.processQueue();
+  assert.equal(projects.getProject(created.id)?.status, "paused");
+
+  projects.requestResume(created.id);
+  await worker.processQueue();
+  assert.equal(projects.getProject(created.id)?.status, "running");
+
+  projects.requestDelete(created.id);
+  await worker.processQueue();
+  assert.equal(projects.getProject(created.id), null);
+  assert.ok(projects.listAudit().some((entry) => entry.action === "project.deleted"));
+
+  const again = projects.createProject({ name: "Beta", slug: "beta" });
+  await worker.processQueue();
+  assert.throws(() => projects.createProject({ name: "Gamma", slug: "gamma" }), /Not enough RAM/);
+  projects.requestDelete(again.id);
+  await worker.processQueue();
+
+  const restored = projects.restoreProject(archive);
+  await worker.processQueue();
+  assert.equal(projects.getProject(restored.id)?.status, "running");
+  assert.equal(projects.getProject(restored.id)?.scheme, "both");
+  assert.equal(projects.getProject(restored.id)?.customDomain, "api.acme.test");
+  assert.equal(projects.readEnvValue(restored.id, "API_EXTERNAL_URL"), "https://api.acme.test");
+  assert.equal(projects.readEnvValue(restored.id, "REGION"), "eu");
+  assert.equal(projects.revealSecret(restored.id, "serviceRole"), revealed);
+  assert.throws(() => projects.restoreProject(archive), /already used/);
+  assert.throws(() => projects.restoreProject({ format: "nope" }), /offline project/);
+});
