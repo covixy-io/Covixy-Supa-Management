@@ -73,6 +73,8 @@ async function provision(job: Job): Promise<void> {
     log(job, secretValues, `reusing service ${uuid}`);
   }
 
+  log(job, secretValues, "setting domains");
+  await updateServiceUrls(uuid, addresses.coolifyUrls);
   log(job, secretValues, "writing environment");
   await setServiceEnv(uuid, env);
   log(job, secretValues, "starting service");

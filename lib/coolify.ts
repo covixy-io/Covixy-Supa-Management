@@ -9,6 +9,16 @@ export function coolifyMode(): CoolifyMode {
   return "rehearsal";
 }
 
+function coolifyErrorDetails(errors: unknown): string {
+  if (!errors || typeof errors !== "object") return "";
+  return Object.entries(errors as Record<string, unknown>)
+    .map(([field, value]) => {
+      const text = Array.isArray(value) ? value.map(String).join(" ") : String(value);
+      return `${field}: ${text}`;
+    })
+    .join(" ");
+}
+
 function apiBase(): string {
   const raw = coolifyConfig().url.replace(/\/$/, "");
   return raw.endsWith("/api/v1") ? raw : `${raw}/api/v1`;
@@ -26,10 +36,12 @@ async function coolifyFetch(path: string, init?: RequestInit): Promise<unknown> 
   });
   const text = await response.text();
   if (!response.ok) {
-    let message = text.slice(0, 400);
+    let message = text.slice(0, 800);
     try {
-      const body = JSON.parse(text) as { message?: string };
+      const body = JSON.parse(text) as { message?: string; errors?: unknown };
       if (body.message) message = body.message;
+      const details = coolifyErrorDetails(body.errors);
+      if (details) message = `${message} ${details}`;
     } catch {
       // Coolify sometimes returns plain text.
     }
@@ -61,15 +73,26 @@ export async function createService(input: {
     docker_compose_raw: Buffer.from(input.compose, "utf8").toString("base64"),
     urls: input.urls,
     force_domain_override: false,
-    is_container_label_escape_enabled: false,
-    tags: ["covixy-supa"],
   };
   if (coolifyConfig().destination) body.destination_uuid = coolifyConfig().destination;
 
-  const created = (await coolifyFetch("/services", {
-    method: "POST",
-    body: JSON.stringify(body),
-  })) as { uuid?: string };
+  let created: { uuid?: string };
+  try {
+    created = (await coolifyFetch("/services", {
+      method: "POST",
+      body: JSON.stringify(body),
+    })) as { uuid?: string };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!/urls:.*not allowed/i.test(message)) throw error;
+    const withoutUrls = { ...body };
+    delete withoutUrls.urls;
+    delete withoutUrls.force_domain_override;
+    created = (await coolifyFetch("/services", {
+      method: "POST",
+      body: JSON.stringify(withoutUrls),
+    })) as { uuid?: string };
+  }
   if (!created.uuid) throw new Error("Coolify did not return a service UUID.");
   return created.uuid;
 }

@@ -44,6 +44,13 @@ test("hosts stay one label under the zone", () => {
   });
   assert.equal(both.canonicalApiUrl, "https://api.acme.test");
   assert.equal(both.canonicalPanelUrl, "https://panel.acme.test");
+  assert.deepEqual(both.coolifyUrls, [
+    {
+      name: "gateway",
+      url: "https://api.acme.test,http://api.acme.test,https://acme.covixy.com,http://acme.covixy.com",
+    },
+    { name: "studio", url: "https://panel.acme.test,http://panel.acme.test" },
+  ]);
   assert.ok(both.redirectUrls.includes("http://api.acme.test"));
   assert.ok(both.apiUrls.includes("https://acme.covixy.com"));
   assert.equal(validateApex("covixy.com"), null);

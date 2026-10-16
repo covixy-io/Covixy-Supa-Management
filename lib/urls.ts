@@ -62,8 +62,8 @@ export function describeAddresses(input: AddressInput): AddressSet {
   const panelUrls = urlsForHost(effectivePanelHost, input.scheme);
   const canonicalApiUrl = canonicalUrl(publicApiHost, input.scheme);
   const coolifyUrls = [
-    ...apiUrls.map((url, index) => ({ name: index === 0 ? "gateway" : `gateway-${index}`, url })),
-    ...panelUrls.map((url, index) => ({ name: index === 0 ? "studio" : `studio-${index}`, url })),
+    { name: "gateway", url: apiUrls.join(",") },
+    { name: "studio", url: panelUrls.join(",") },
   ];
   return {
     ...input,

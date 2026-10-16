@@ -263,6 +263,8 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
   studio:
     image: supabase/studio:2026.09.07-sha-7996410
     restart: unless-stopped
+    ports:
+      - "3000"
     depends_on:
       meta:
         condition: service_started
@@ -287,6 +289,8 @@ ${indent(dbBoot(rolesB64, jwtB64), 8)}
   gateway:
     image: caddy:2.10-alpine
     restart: unless-stopped
+    ports:
+      - "80"
     depends_on:
       auth:
         condition: service_started
