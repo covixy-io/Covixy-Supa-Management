@@ -139,6 +139,8 @@ test("compose placeholders are all given to Coolify", () => {
   );
   const roles = blobs[0] || "";
   assert.match(roles, /\$POSTGRES_PASSWORD/);
+  assert.match(roles, /\\gexec/);
+  assert.equal(roles.includes("DO $do$"), false);
   assert.match(roles, /supabase_storage_admin/);
   assert.match(roles, /supabase_admin/);
   assert.ok(blobs.some((text) => text.includes("banned_until")));
